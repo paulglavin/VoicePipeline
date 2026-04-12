@@ -39,11 +39,13 @@ class SpeechToText:
             import torch
             from transformers import pipeline as hf_pipeline
 
-            self._device = "cuda" if torch.cuda.is_available() else "cpu"
-            dtype        = torch.float16 if self._device == "cuda" else torch.float32
+            cuda         = torch.cuda.is_available()
+            self._device = 0 if cuda else "cpu"
+            dtype        = torch.float16 if cuda else torch.float32
 
             logger.info(
-                "Loading %s on %s — first run downloads ~2 GB", _MODEL_ID, self._device
+                "Loading %s on %s — first run downloads ~2 GB",
+                _MODEL_ID, "cuda:0" if cuda else "cpu",
             )
 
             self._pipe = hf_pipeline(
