@@ -1,0 +1,32 @@
+services:
+  voicepipeline:
+    build: .
+    ports:
+      - "8000:8000"       # HTTP — management UI + API
+      - "10300:10300"     # Wyoming STT — add this as a custom integration in HA
+    volumes:
+      - ./data:/data                  # runtime data (DB, audio clips, embeddings)
+      - model_cache:/models           # ML model weights (survives rebuilds)
+    environment:
+      DB_PATH:           /data/speaker.db
+      AUDIO_DIR:         /data/audio
+      EMBEDDING_DIR:     /data/embeddings
+      MODEL_DIR:         /models
+      WYOMING_HOST:      0.0.0.0
+      WYOMING_PORT:      "10300"
+      # Uncomment if ibm-granite/granite-speech-4.0-1b requires authentication:
+      # HUGGING_FACE_HUB_TOKEN: your_token_here
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/settings')"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s    # first run downloads ~3–4 GB of model weights
+
+volumes:
+  model_cache:    # named volume — weights survive `docker compose down`

@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Voice Pipeline</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="app-header">
+    <h1 class="app-title">Voice Pipeline</h1>
+    <nav class="tab-nav" role="tablist">
+      <button class="tab-btn is-active" data-tab="pending" role="tab" aria-selected="true">
+        Pending <span class="badge" id="pending-count" aria-label="pending count"></span>
+      </button>
+      <button class="tab-btn" data-tab="speakers" role="tab" aria-selected="false">Enrolled Speakers</button>
+      <button class="tab-btn" data-tab="history" role="tab" aria-selected="false">History</button>
+      <button class="tab-btn" data-tab="settings" role="tab" aria-selected="false">Settings</button>
+    </nav>
+  </header>
+
+  <main class="app-main">
+
+    <!-- Pending -->
+    <section class="tab-panel is-active" id="tab-pending" role="tabpanel">
+      <div id="pending-list" class="card-list"></div>
+    </section>
+
+    <!-- Enrolled speakers -->
+    <section class="tab-panel" id="tab-speakers" role="tabpanel">
+      <div id="speakers-list" class="speaker-grid"></div>
+    </section>
+
+    <!-- History -->
+    <section class="tab-panel" id="tab-history" role="tabpanel">
+      <div class="history-filters">
+        <input class="filter-input" id="filter-speaker" type="text" placeholder="Speaker name">
+        <input class="filter-input" id="filter-from" type="date" aria-label="From date">
+        <input class="filter-input" id="filter-to"   type="date" aria-label="To date">
+        <button class="btn btn--primary" id="btn-search">Search</button>
+        <button class="btn btn--ghost"   id="btn-clear">Clear</button>
+      </div>
+      <div id="history-list" class="history-list"></div>
+    </section>
+
+    <!-- Settings -->
+    <section class="tab-panel" id="tab-settings" role="tabpanel">
+      <div class="settings-panel">
+        <h2>Retention Settings</h2>
+        <form id="settings-form" class="settings-form" novalidate>
+
+          <div class="setting-row">
+            <label for="s-pending">Pending retention (days)</label>
+            <input class="setting-input" id="s-pending" type="number" min="0" step="1">
+            <p class="setting-hint">Unresolved interactions are purged after this many days. <strong>0 = never purge.</strong></p>
+          </div>
+
+          <div class="setting-row">
+            <label for="s-resolved">Resolved audio retention (days)</label>
+            <input class="setting-input" id="s-resolved" type="number" min="-1" step="1">
+            <p class="setting-hint">WAV files for resolved interactions are deleted after this many days. Metadata is kept permanently. <strong>−1 = keep indefinitely.</strong></p>
+            <p class="setting-warn" id="warn-resolved" hidden>
+              Warning: setting this to 0 will delete resolved audio files on the next retention run.
+            </p>
+          </div>
+
+          <div class="setting-row">
+            <label for="s-clips">Reference clips per speaker</label>
+            <input class="setting-input" id="s-clips" type="number" min="1" max="20" step="1">
+            <p class="setting-hint">Maximum high-confidence clips retained per enrolled speaker. Oldest clips are rotated out first.</p>
+          </div>
+
+          <div class="settings-actions">
+            <button class="btn btn--primary" type="submit">Save settings</button>
+            <span class="settings-saved" id="settings-saved" hidden>Saved.</span>
+          </div>
+
+        </form>
+      </div>
+    </section>
+
+  </main>
+
+  <div class="toast" id="toast" role="alert" aria-live="assertive"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

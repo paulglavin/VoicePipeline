@@ -1,0 +1,31 @@
+# Web framework
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+apscheduler==3.10.4
+python-multipart==0.0.20
+
+# Wyoming protocol (Home Assistant STT integration)
+wyoming>=1.5.3
+
+# PyTorch — installed CPU-only in Dockerfile to keep image size down.
+# For GPU, remove the --index-url override in the Dockerfile.
+torch>=2.2.0
+torchaudio>=2.2.0
+
+# ML model inference
+transformers>=4.45.0
+huggingface_hub>=0.24.0
+accelerate>=0.33.0        # required by transformers for model loading
+
+# Noise suppression (GTCRN)
+# Weights downloaded from HuggingFace on first run; stored in MODEL_DIR/gtcrn/
+
+# Voice activity detection
+silero-vad>=5.1
+
+# Speaker identification (ERes2Net via wespeaker)
+wespeaker>=1.2.0
+
+# Audio I/O (reference clip loading, temp files for wespeaker)
+soundfile>=0.12.1
+numpy==2.2.1

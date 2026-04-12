@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import ast; ast.parse\\(open\\('api/main.py'\\).read\\(\\)\\); print\\('AST OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('c:/Projects/VoicePipeline/api/main.py'\\).read\\(\\)\\); print\\('AST OK'\\)\")",
+      "Bash(py -c \"import ast; ast.parse\\(open\\('c:/Projects/VoicePipeline/api/main.py'\\).read\\(\\)\\); print\\('AST OK'\\)\")",
+      "Bash(/c/Users/PaulGlavin/AppData/Local/Python/bin/python.exe -m pip install -r c:/Projects/VoicePipeline/requirements.txt -q)",
+      "Bash(/c/Users/PaulGlavin/AppData/Local/Python/bin/python.exe -m pip install apscheduler fastapi pydantic -q)",
+      "Bash(/c/Users/PaulGlavin/AppData/Local/Python/bin/python.exe -c ':*)",
+      "Bash(/c/Users/PaulGlavin/AppData/Local/Python/bin/python.exe -c \"import api.main; print\\('import OK'\\)\")"
+    ]
+  }
+}
