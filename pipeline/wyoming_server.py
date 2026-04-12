@@ -57,6 +57,7 @@ _INFO = Info(
                     ),
                     installed=True,
                     languages=["en"],
+                    version="4.0.1b",
                 )
             ],
         )
