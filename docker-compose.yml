@@ -14,8 +14,8 @@ services:
       MODEL_DIR:         /models
       WYOMING_HOST:      0.0.0.0
       WYOMING_PORT:      "10300"
-      # Uncomment if ibm-granite/granite-speech-4.0-1b requires authentication:
-      # HUGGING_FACE_HUB_TOKEN: your_token_here
+      # Required — granite-speech-4.0-1b is a gated model:
+      HUGGING_FACE_HUB_TOKEN: your_token_here
     restart: unless-stopped
     healthcheck:
       test:
