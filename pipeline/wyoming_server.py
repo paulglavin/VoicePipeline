@@ -50,7 +50,7 @@ _INFO = Info(
             version="1.0.0",
             models=[
                 AsrModel(
-                    name="granite-speech-4.0-1b",
+                    name="granite-4.0-1b-speech",
                     description="IBM Granite 4.0 1B Speech",
                     attribution=Attribution(
                         name="IBM Research",
