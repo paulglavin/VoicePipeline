@@ -7,7 +7,9 @@
       "Bash(/c/Users/PaulGlavin/AppData/Local/Python/bin/python.exe -m pip install -r c:/Projects/VoicePipeline/requirements.txt -q)",
       "Bash(/c/Users/PaulGlavin/AppData/Local/Python/bin/python.exe -m pip install apscheduler fastapi pydantic -q)",
       "Bash(/c/Users/PaulGlavin/AppData/Local/Python/bin/python.exe -c ':*)",
-      "Bash(/c/Users/PaulGlavin/AppData/Local/Python/bin/python.exe -c \"import api.main; print\\('import OK'\\)\")"
+      "Bash(/c/Users/PaulGlavin/AppData/Local/Python/bin/python.exe -c \"import api.main; print\\('import OK'\\)\")",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)"
     ]
   }
 }
