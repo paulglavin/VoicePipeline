@@ -51,10 +51,10 @@ class SpeechToText:
                 model=_MODEL_ID,
                 device=self._device,
                 torch_dtype=dtype,
+                trust_remote_code=True,
                 model_kwargs={
-                    "cache_dir":        cache_dir,
+                    "cache_dir":         cache_dir,
                     "low_cpu_mem_usage": True,
-                    "trust_remote_code": True,
                 },
             )
             logger.info("Granite STT ready on %s", self._device)
