@@ -18,6 +18,13 @@ services:
       # Required — granite-4.0-1b-speech is a gated model.
       # Set HF_TOKEN in a .env file alongside docker-compose.yml.
       HF_TOKEN: ${HF_TOKEN}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     restart: unless-stopped
     healthcheck:
       test:
