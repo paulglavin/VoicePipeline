@@ -17,6 +17,23 @@
 }
 
 /* -----------------------------------------------------------------------
+   Dark theme variables
+   ----------------------------------------------------------------------- */
+[data-theme="dark"] {
+  --clr-bg:            #0f1117;
+  --clr-surface:       #1a1d27;
+  --clr-border:        #2d3244;
+  --clr-text:          #e8eaf0;
+  --clr-text-muted:    #7a8399;
+  --clr-primary:       #4f8ef7;
+  --clr-primary-hover: #6ba3ff;
+  --clr-red:           #f87171;
+  --clr-amber:         #fbbf24;
+  --clr-green:         #34d399;
+  --shadow:            0 1px 3px rgba(0,0,0,.3), 0 1px 2px rgba(0,0,0,.2);
+}
+
+/* -----------------------------------------------------------------------
    Reset & base
    ----------------------------------------------------------------------- */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -552,3 +569,68 @@ body {
   white-space: nowrap;
 }
 .toast.is-visible { opacity: 1; }
+
+/* -----------------------------------------------------------------------
+   Theme toggle
+   ----------------------------------------------------------------------- */
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  background: var(--clr-bg);
+  border: 1px solid var(--clr-border);
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.theme-btn {
+  background: none;
+  border: none;
+  border-radius: 5px;
+  width: 28px;
+  height: 28px;
+  font-size: .9rem;
+  cursor: pointer;
+  color: var(--clr-text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .12s, color .12s;
+  line-height: 1;
+}
+
+.theme-btn:hover { color: var(--clr-text); }
+
+.theme-btn.is-active {
+  background: var(--clr-surface);
+  color: var(--clr-primary);
+  box-shadow: 0 1px 2px rgba(0,0,0,.12);
+}
+
+/* -----------------------------------------------------------------------
+   Dark mode overrides for hardcoded colours
+   ----------------------------------------------------------------------- */
+[data-theme="dark"] .card--unknown        { background: #2d1515; }
+[data-theme="dark"] .card--low-confidence { background: #231c0a; }
+
+[data-theme="dark"] .card-label--unknown { background: #4a1a1a; color: #fca5a5; }
+[data-theme="dark"] .card-label--low     { background: #3d2910; color: #fcd34d; }
+
+[data-theme="dark"] .btn-play            { background: #252936; }
+[data-theme="dark"] .btn-play:hover:not(:disabled) { background: #2f3447; }
+
+[data-theme="dark"] .btn--confirm        { background: #052e16; color: #86efac; border-color: #14532d; }
+[data-theme="dark"] .btn--confirm:hover:not(:disabled) { background: #14532d; }
+
+[data-theme="dark"] .btn--reject         { background: #450a0a; color: #fca5a5; border-color: #7f1d1d; }
+[data-theme="dark"] .btn--reject:hover:not(:disabled)  { background: #7f1d1d; }
+
+[data-theme="dark"] .status-badge--pending   { background: #3d2910; color: #fcd34d; }
+[data-theme="dark"] .status-badge--resolved  { background: #052e16; color: #86efac; }
+[data-theme="dark"] .status-badge--dismissed { background: #1e293b; color: #94a3b8; }
+
+[data-theme="dark"] .setting-warn { color: #fcd34d; background: #3d2910; border-color: #78350f; }
+[data-theme="dark"] .settings-saved { color: #86efac; }
+
+[data-theme="dark"] .toast { background: #e2e8f0; color: #1a202c; }

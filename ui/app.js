@@ -1,4 +1,39 @@
 /* ---------------------------------------------------------------------------
+   Theme
+   --------------------------------------------------------------------------- */
+
+const _THEME_KEY = 'vp-theme';
+const _mq = window.matchMedia('(prefers-color-scheme: dark)');
+
+function _applyTheme(pref) {
+  const resolved = pref === 'system' ? (_mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.setAttribute('data-theme', resolved);
+  document.querySelectorAll('.theme-btn').forEach(btn => {
+    btn.classList.toggle('is-active', btn.dataset.themeVal === pref);
+  });
+}
+
+function initTheme() {
+  const saved = localStorage.getItem(_THEME_KEY) || 'system';
+  _applyTheme(saved);
+
+  document.querySelectorAll('.theme-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const val = btn.dataset.themeVal;
+      localStorage.setItem(_THEME_KEY, val);
+      _applyTheme(val);
+    });
+  });
+
+  // Track OS-level changes when in system mode
+  _mq.addEventListener('change', () => {
+    if ((localStorage.getItem(_THEME_KEY) || 'system') === 'system') {
+      _applyTheme('system');
+    }
+  });
+}
+
+/* ---------------------------------------------------------------------------
    API
    --------------------------------------------------------------------------- */
 
@@ -617,4 +652,5 @@ document.getElementById('btn-clear').addEventListener('click', () => {
    Boot
    --------------------------------------------------------------------------- */
 
+initTheme();
 loadPending();
