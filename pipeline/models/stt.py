@@ -50,7 +50,7 @@ class SpeechToText:
                 "automatic-speech-recognition",
                 model=_MODEL_ID,
                 device=self._device,
-                torch_dtype=dtype,
+                dtype=dtype,
                 trust_remote_code=True,
                 model_kwargs={
                     "cache_dir":         cache_dir,

@@ -15,9 +15,9 @@ services:
       MODEL_DIR:         /models
       WYOMING_HOST:      0.0.0.0
       WYOMING_PORT:      "10300"
-      # Required — granite-speech-4.0-1b is a gated model.
-      # Set HUGGING_FACE_HUB_TOKEN in a .env file alongside docker-compose.yml.
-      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN}
+      # Required — granite-4.0-1b-speech is a gated model.
+      # Set HF_TOKEN in a .env file alongside docker-compose.yml.
+      HF_TOKEN: ${HF_TOKEN}
     restart: unless-stopped
     healthcheck:
       test:
