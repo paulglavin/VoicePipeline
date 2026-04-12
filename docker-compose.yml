@@ -1,6 +1,7 @@
 services:
   voicepipeline:
     build: .
+    container_name: voicepipeline
     ports:
       - "8000:8000"       # HTTP — management UI + API
       - "10300:10300"     # Wyoming STT — add this as a custom integration in HA
