@@ -1,7 +1,7 @@
 """
 stt.py — IBM Granite 4.0 1B Speech STT wrapper.
 
-Model: ibm-granite/granite-speech-4.0-1b (HuggingFace)
+Model: ibm-granite/granite-4.0-1b-speech (HuggingFace)
 Downloaded on first run; cached in MODEL_DIR/granite_stt/.
 
 The model follows the Whisper encoder + Granite decoder architecture.
@@ -19,7 +19,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 _SR       = 16_000
-_MODEL_ID = "ibm-granite/granite-speech-4.0-1b"
+_MODEL_ID = "ibm-granite/granite-4.0-1b-speech"
 
 
 class SpeechToText:
