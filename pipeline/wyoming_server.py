@@ -47,6 +47,7 @@ _INFO = Info(
             ),
             attribution=Attribution(name="VoicePipeline", url=""),
             installed=True,
+            version="1.0.0",
             models=[
                 AsrModel(
                     name="granite-speech-4.0-1b",
