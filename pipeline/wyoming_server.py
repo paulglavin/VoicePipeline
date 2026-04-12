@@ -77,7 +77,8 @@ class _PipelineEventHandler(AsyncEventHandler):
         writer: asyncio.StreamWriter,
         **kwargs,
     ) -> None:
-        super().__init__(wyoming_info, reader, writer, **kwargs)
+        super().__init__(reader, writer, **kwargs)
+        self._wyoming_info = wyoming_info
         self._orchestrator = orchestrator
         self._chunks:      list[bytes] = []
         self._sample_rate: int  = 16_000
@@ -87,7 +88,7 @@ class _PipelineEventHandler(AsyncEventHandler):
     async def handle_event(self, event: Event) -> bool:
         # ── Service description ─────────────────────────────────────────
         if Describe.is_type(event.type):
-            await self.write_event(_INFO.event())
+            await self.write_event(self._wyoming_info.event())
 
         # ── Audio stream start ──────────────────────────────────────────
         elif AudioStart.is_type(event.type):
