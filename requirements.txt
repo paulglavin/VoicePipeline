@@ -23,8 +23,8 @@ accelerate>=0.33.0        # required by transformers for model loading
 # Voice activity detection
 silero-vad>=5.1
 
-# Speaker identification (ERes2Net via wespeaker)
-wespeaker>=1.2.0
+# Speaker identification (ECAPA-TDNN via SpeechBrain — equivalent quality to ERes2Net)
+speechbrain>=1.0.0
 
 # Audio I/O (reference clip loading, temp files for wespeaker)
 soundfile>=0.12.1

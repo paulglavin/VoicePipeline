@@ -1,9 +1,10 @@
 """
-speaker_id.py — ERes2Net speaker identification wrapper.
+speaker_id.py — Speaker identification wrapper.
 
-Uses the wespeaker package (https://github.com/wenet-e2e/wespeaker).
-The pretrained ERes2Net model is downloaded via wespeaker's model hub on
-first run and cached in MODEL_DIR/wespeaker/.
+Uses SpeechBrain's ECAPA-TDNN model (speechbrain/spkrec-ecapa-voxceleb),
+which provides equivalent quality to ERes2Net for speaker verification.
+Model is downloaded from HuggingFace on first run and cached in
+MODEL_DIR/speechbrain/.
 
 identify() compares the input audio's embedding against the mean embeddings
 of enrolled speakers (built from their reference_clips). The cache refreshes
@@ -14,9 +15,7 @@ All public methods are synchronous and blocking — call via asyncio.to_thread.
 
 import json
 import logging
-import os
 import sqlite3
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -25,36 +24,34 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-_SR            = 16_000
-_MATCH_THRESH  = 0.75   # cosine similarity threshold — matches writer.py
-_CACHE_TTL     = 300    # seconds between speaker cache refreshes
-
-# wespeaker pretrained model name.  'english' resolves to the VoxCeleb
-# ResNet34-LM model which uses the ERes2Net architecture.
-_WESPEAKER_MODEL = "english"
+_SR           = 16_000
+_MATCH_THRESH = 0.75   # cosine similarity threshold — matches writer.py
+_CACHE_TTL    = 300    # seconds between speaker cache refreshes
+_HF_MODEL     = "speechbrain/spkrec-ecapa-voxceleb"
 
 
 class SpeakerIdentifier:
     """
-    ERes2Net-based speaker identification.
+    ECAPA-TDNN speaker identification.
 
     identify() returns (speaker_name | None, cosine_similarity | None, embedding | None).
     """
 
     def __init__(self, model_dir: str, db_path: str) -> None:
-        self._db_path     = db_path
-        self._model       = None
-        self._cache:  dict[str, np.ndarray] = {}
-        self._cache_t     = 0.0
-        self._lock        = threading.Lock()
-
-        cache_dir = str(Path(model_dir) / "wespeaker")
-        os.environ.setdefault("WESPEAKER_HOME", cache_dir)
+        self._db_path  = db_path
+        self._model    = None
+        self._cache:   dict[str, np.ndarray] = {}
+        self._cache_t  = 0.0
+        self._lock     = threading.Lock()
+        self._save_dir = str(Path(model_dir) / "speechbrain")
 
         try:
-            import wespeaker
-            self._model = wespeaker.load_model(_WESPEAKER_MODEL)
-            logger.info("ERes2Net (wespeaker/%s) loaded", _WESPEAKER_MODEL)
+            from speechbrain.inference.speaker import EncoderClassifier
+            self._model = EncoderClassifier.from_hparams(
+                source=_HF_MODEL,
+                savedir=self._save_dir,
+            )
+            logger.info("SpeechBrain ECAPA-TDNN loaded from %s", _HF_MODEL)
         except Exception as exc:
             logger.warning(
                 "SpeakerIdentifier init failed (%s) — unknown-speaker mode", exc
@@ -109,15 +106,24 @@ class SpeakerIdentifier:
     # Embedding helpers
 
     def _embed_file(self, path: str) -> np.ndarray | None:
-        """Extract L2-normalised embedding from a WAV file path."""
+        """Extract a normalised embedding from a WAV file path."""
         if not Path(path).exists():
             logger.debug("Reference clip missing (retention purged?): %s", path)
             return None
         try:
-            raw = self._model.extract_embedding(path)
-            if raw is None:
-                return None
-            arr = np.array(raw, dtype=np.float32)
+            import torch
+            import torchaudio
+
+            signal, sr = torchaudio.load(path)
+            if sr != _SR:
+                signal = torchaudio.functional.resample(signal, sr, _SR)
+            if signal.shape[0] > 1:
+                signal = signal.mean(dim=0, keepdim=True)
+
+            with torch.no_grad():
+                emb = self._model.encode_batch(signal)   # (1, 1, dim)
+
+            arr = emb.squeeze().numpy().astype(np.float32)
             return _l2(arr)
         except Exception as exc:
             logger.debug("Embedding failed for %s: %s", path, exc)
@@ -125,35 +131,26 @@ class SpeakerIdentifier:
 
     def extract_embedding(self, pcm_bytes: bytes) -> np.ndarray | None:
         """
-        Extract an L2-normalised speaker embedding from raw 16-bit PCM.
+        Extract a normalised speaker embedding from raw 16-bit LE PCM at 16 kHz.
         Returns None if the model is unavailable or the audio is too short.
         """
         if self._model is None or len(pcm_bytes) < _SR * 2 * 0.2:   # < 200 ms
             return None
 
         try:
-            # wespeaker works on WAV files — write a temp file
+            import torch
+
             audio = (
                 np.frombuffer(pcm_bytes, dtype=np.int16)
                 .astype(np.float32) / 32768.0
             )
+            tensor = torch.from_numpy(audio).unsqueeze(0)   # (1, N)
 
-            # Use extract_embedding_from_pcm if available (wespeaker ≥ 1.2)
-            if hasattr(self._model, "extract_embedding_from_pcm"):
-                raw = self._model.extract_embedding_from_pcm(audio, sample_rate=_SR)
-            else:
-                import soundfile as sf
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fh:
-                    tmp = fh.name
-                try:
-                    sf.write(tmp, audio, _SR, subtype="PCM_16")
-                    raw = self._model.extract_embedding(tmp)
-                finally:
-                    Path(tmp).unlink(missing_ok=True)
+            with torch.no_grad():
+                emb = self._model.encode_batch(tensor)      # (1, 1, dim)
 
-            if raw is None:
-                return None
-            return _l2(np.array(raw, dtype=np.float32))
+            arr = emb.squeeze().numpy().astype(np.float32)
+            return _l2(arr)
 
         except Exception as exc:
             logger.warning("extract_embedding error: %s", exc)
@@ -188,20 +185,15 @@ class SpeakerIdentifier:
                 best_name  = name
 
         if best_score >= _MATCH_THRESH:
-            logger.debug(
-                "Speaker identified: %s (score=%.3f)", best_name, best_score
-            )
+            logger.debug("Speaker identified: %s (score=%.3f)", best_name, best_score)
             return best_name, best_score, embedding
 
-        logger.debug(
-            "No match above threshold (best=%s score=%.3f)", best_name, best_score
-        )
+        logger.debug("No match above threshold (best=%s score=%.3f)", best_name, best_score)
         return None, best_score if best_score >= 0 else None, embedding
 
 
 # ---------------------------------------------------------------------------
 
 def _l2(v: np.ndarray) -> np.ndarray:
-    """L2-normalise a vector in place and return it."""
     norm = np.linalg.norm(v)
     return v / (norm + 1e-8)

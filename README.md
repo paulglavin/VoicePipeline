@@ -13,7 +13,7 @@ GTCRN — noise suppression
       ↓
 SileroVAD — voice activity detection
       ↓
-ERes2Net — speaker identification
+ECAPA-TDNN — speaker identification
       ↓
 Granite 4.0 1B Speech — speech-to-text
       ↓
