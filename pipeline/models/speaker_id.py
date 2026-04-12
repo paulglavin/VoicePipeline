@@ -50,8 +50,9 @@ class SpeakerIdentifier:
             self._model = EncoderClassifier.from_hparams(
                 source=_HF_MODEL,
                 savedir=self._save_dir,
+                run_opts={"device": "cpu"},
             )
-            logger.info("SpeechBrain ECAPA-TDNN loaded from %s", _HF_MODEL)
+            logger.info("SpeechBrain ECAPA-TDNN loaded on cpu from %s", _HF_MODEL)
         except Exception as exc:
             logger.warning(
                 "SpeakerIdentifier init failed (%s) — unknown-speaker mode", exc

@@ -42,9 +42,9 @@ class VoiceActivityDetector:
             torch.hub.set_dir(str(self._hub_dir))
             from silero_vad import load_silero_vad, get_speech_timestamps
 
-            self._model  = load_silero_vad()
+            self._model  = load_silero_vad().to("cpu")
             self._get_ts = get_speech_timestamps
-            logger.info("SileroVAD loaded (hub cache: %s)", self._hub_dir)
+            logger.info("SileroVAD loaded on cpu (hub cache: %s)", self._hub_dir)
         except Exception as exc:
             logger.warning("VoiceActivityDetector init failed (%s) — passthrough mode", exc)
 
@@ -73,7 +73,7 @@ class VoiceActivityDetector:
                 np.frombuffer(pcm_bytes, dtype=np.int16)
                 .astype(np.float32) / 32768.0
             )
-            tensor = torch.from_numpy(audio)
+            tensor = torch.from_numpy(audio).to("cpu")
 
             timestamps = self._get_ts(
                 tensor,
