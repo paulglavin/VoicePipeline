@@ -4,9 +4,9 @@ noise_suppressor.py — GTCRN noise suppression wrapper.
 Architecture: Gated Temporal Convolutional Recurrent Network (GTCRN-lite).
 Reference: https://github.com/Xiaobin-Rong/gtcrn
 
-Pretrained weights are downloaded from HuggingFace on first run and cached
-in MODEL_DIR/gtcrn/. If the download fails the model still runs (untrained),
-which degrades suppression quality but keeps the pipeline functional.
+Pretrained weights must be placed manually at MODEL_DIR/gtcrn/gtcrn_lite.pth.
+If the file is absent the suppressor runs in passthrough mode (no suppression)
+rather than degrading audio with untrained weights.
 """
 
 import logging
@@ -22,7 +22,6 @@ _SR         = 16_000
 _N_FFT      = 512
 _HOP        = 160
 _WIN        = 512
-_HF_REPO    = "Xiaobin-Rong/gtcrn"
 _HF_FILE    = "gtcrn_lite.pth"
 
 
@@ -135,47 +134,28 @@ class NoiseSuppressor:
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._window = torch.hann_window(_WIN)
 
+        weights_path = self._dir / _HF_FILE
+        if not weights_path.exists():
+            logger.info(
+                "GTCRN: no pretrained weights at %s — passthrough mode "
+                "(place gtcrn_lite.pth in that directory to enable noise suppression)",
+                weights_path,
+            )
+            return
+
         try:
             model = _GTCRN()
-            weights_path = self._dir / _HF_FILE
-            if not weights_path.exists():
-                self._download(weights_path)
-
-            if weights_path.exists():
-                sd = torch.load(weights_path, map_location="cpu", weights_only=True)
-                model.load_state_dict(sd)
-                logger.info("GTCRN: weights loaded from %s", weights_path)
-            else:
-                logger.warning(
-                    "GTCRN: no pretrained weights found — "
-                    "noise suppression will run with random weights"
-                )
-
+            sd = torch.load(weights_path, map_location="cpu", weights_only=True)
+            model.load_state_dict(sd)
             model.eval()
             self._model = model.to(self._device)
+            logger.info("GTCRN: weights loaded from %s", weights_path)
         except Exception as exc:
             logger.warning("NoiseSuppressor init failed (%s) — passthrough mode", exc)
 
     @property
     def available(self) -> bool:
         return self._model is not None
-
-    # ------------------------------------------------------------------
-
-    def _download(self, dest: Path) -> None:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            from huggingface_hub import hf_hub_download
-            hf_hub_download(
-                repo_id=_HF_REPO,
-                filename=_HF_FILE,
-                local_dir=str(dest.parent),
-            )
-            logger.info("GTCRN: weights downloaded to %s", dest)
-        except Exception as exc:
-            logger.warning("GTCRN: weight download failed (%s)", exc)
-
-    # ------------------------------------------------------------------
 
     def process(self, pcm_bytes: bytes) -> bytes:
         """
