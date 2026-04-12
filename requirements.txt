@@ -7,10 +7,10 @@ python-multipart==0.0.20
 # Wyoming protocol (Home Assistant STT integration)
 wyoming>=1.5.3
 
-# PyTorch — installed CPU-only in Dockerfile to keep image size down.
-# For GPU, remove the --index-url override in the Dockerfile.
-torch>=2.2.0
-torchaudio>=2.2.0
+# PyTorch — CUDA 12.8 build installed in Dockerfile (RTX 50-series / Blackwell).
+# For CPU-only, swap the index URL in Dockerfile and downgrade to >=2.2.0.
+torch>=2.7.0
+torchaudio>=2.7.0
 
 # ML model inference
 transformers>=4.45.0

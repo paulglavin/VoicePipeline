@@ -9,13 +9,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# ── Step 1: install PyTorch CPU-only wheel (separate layer for cache) ──
-# CPU wheel is ~800 MB vs ~2.5 GB for the CUDA build.
-# To use a GPU, remove the --index-url line and rebuild.
+# ── Step 1: install PyTorch with CUDA 12.8 (Blackwell / RTX 50-series) ──
+# Requires CUDA 12.8+ on the host and nvidia-container-toolkit.
+# For CPU-only, replace the index URL with https://download.pytorch.org/whl/cpu
+# and downgrade torch to >=2.2.0.
 COPY requirements.txt .
 RUN pip install --no-cache-dir \
-    --index-url https://download.pytorch.org/whl/cpu \
-    "torch>=2.2.0" "torchaudio>=2.2.0"
+    --index-url https://download.pytorch.org/whl/cu128 \
+    "torch>=2.7.0" "torchaudio>=2.7.0"
 
 # ── Step 2: install the remaining requirements ─────────────────────────
 RUN pip install --no-cache-dir -r requirements.txt
