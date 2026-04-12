@@ -448,10 +448,7 @@ async def lifespan(app: FastAPI):
     # ── Retention + speaker-cache scheduler ────────────────────────────
     scheduler = AsyncIOScheduler()
     scheduler.add_job(RetentionJob(db_path=DB_PATH).run, "interval", hours=6)
-    scheduler.add_job(
-        lambda: asyncio.get_event_loop().run_in_executor(None, sid.refresh_cache),
-        "interval", minutes=5,
-    )
+    scheduler.add_job(sid.refresh_cache, "interval", minutes=5)
     scheduler.start()
     logger.info("Retention scheduler started")
 
