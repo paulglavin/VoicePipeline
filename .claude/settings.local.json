@@ -9,7 +9,8 @@
       "Bash(/c/Users/PaulGlavin/AppData/Local/Python/bin/python.exe -c ':*)",
       "Bash(/c/Users/PaulGlavin/AppData/Local/Python/bin/python.exe -c \"import api.main; print\\('import OK'\\)\")",
       "Bash(git add:*)",
-      "Bash(git commit -m ':*)"
+      "Bash(git commit -m ':*)",
+      "WebSearch"
     ]
   }
 }

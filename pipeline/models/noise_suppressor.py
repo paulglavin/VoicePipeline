@@ -12,14 +12,13 @@ Models are downloaded automatically on first run to MODEL_DIR/dtln/.
 If download fails the suppressor runs in passthrough mode.
 
 Manual setup (if auto-download fails):
-    1. Clone DTLN: git clone https://github.com/breizhn/DTLN
-    2. pip install tensorflow tf2onnx
-    3. cd DTLN && python export_dtln_to_onnx.py
-    4. Copy DTLN_model_1.onnx, DTLN_model_2.onnx to MODEL_DIR/dtln/
+    Download model_1.onnx and model_2.onnx from:
+    https://github.com/breizhn/DTLN/tree/master/pretrained_model
+    and place them in MODEL_DIR/dtln/
 """
 
 import logging
-import shutil
+import urllib.request
 from pathlib import Path
 
 import numpy as np
@@ -30,9 +29,11 @@ _SR          = 16_000
 _BLOCK_LEN   = 512    # 32 ms at 16 kHz
 _BLOCK_SHIFT = 256    # 50% overlap
 
-# HuggingFace repo that hosts the pre-exported DTLN ONNX models.
-_HF_REPO  = "breizhn/DTLN"
-_HF_FILES = ["DTLN_model_1.onnx", "DTLN_model_2.onnx"]
+# Official DTLN pretrained ONNX weights — breizhn/DTLN on GitHub
+_GITHUB_BASE = (
+    "https://raw.githubusercontent.com/breizhn/DTLN/master/pretrained_model/"
+)
+_ONNX_FILES = ["model_1.onnx", "model_2.onnx"]
 
 
 class NoiseSuppressor:
@@ -53,8 +54,8 @@ class NoiseSuppressor:
         self._in2:  list[str] = []
         self._out2: list[str] = []
 
-        p1 = self._dir / "DTLN_model_1.onnx"
-        p2 = self._dir / "DTLN_model_2.onnx"
+        p1 = self._dir / "model_1.onnx"
+        p2 = self._dir / "model_2.onnx"
 
         if not p1.exists() or not p2.exists():
             self._download_models(p1, p2)
@@ -72,18 +73,23 @@ class NoiseSuppressor:
     # Setup helpers
 
     def _download_models(self, p1: Path, p2: Path) -> None:
-        """Try to fetch DTLN ONNX files from HuggingFace Hub."""
+        """Download DTLN ONNX files from the official GitHub repo."""
         try:
-            from huggingface_hub import hf_hub_download
-            logger.info("DTLN: downloading models from HuggingFace (%s) ...", _HF_REPO)
-            for fname, dest in zip(_HF_FILES, (p1, p2)):
-                cached = hf_hub_download(repo_id=_HF_REPO, filename=fname)
-                shutil.copy(cached, dest)
-            logger.info("DTLN: models downloaded to %s", self._dir)
+            logger.info("DTLN: downloading pretrained models from GitHub ...")
+            for fname, dest in zip(_ONNX_FILES, (p1, p2)):
+                url = _GITHUB_BASE + fname
+                logger.info("DTLN: fetching %s", url)
+                urllib.request.urlretrieve(url, dest)
+            logger.info("DTLN: models saved to %s", self._dir)
         except Exception as exc:
+            # Clean up partial downloads
+            for p in (p1, p2):
+                p.unlink(missing_ok=True)
             logger.warning(
                 "DTLN: auto-download failed (%s). "
-                "Place DTLN_model_1.onnx and DTLN_model_2.onnx in %s to enable noise suppression.",
+                "Place model_1.onnx and model_2.onnx from "
+                "https://github.com/breizhn/DTLN/tree/master/pretrained_model "
+                "into %s to enable noise suppression.",
                 exc,
                 self._dir,
             )
