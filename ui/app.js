@@ -537,6 +537,30 @@ function buildHistoryRow(item) {
     right.appendChild(playBtn);
   }
 
+  if (item.status === 'resolved' && item.current_assigned_to) {
+    const reconfirmBtn = document.createElement('button');
+    reconfirmBtn.className = 'btn btn--ghost btn--reconfirm';
+    reconfirmBtn.title = `Re-confirm as ${item.current_assigned_to} (adds clip to reference set)`;
+    reconfirmBtn.textContent = '↻';
+    reconfirmBtn.addEventListener('click', async e => {
+      e.stopPropagation();
+      reconfirmBtn.disabled = true;
+      try {
+        await apiFetch(`/interactions/${item.id}/resolve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'confirm', assigned_to: item.current_assigned_to }),
+        });
+        showToast(`Re-confirmed as ${item.current_assigned_to} — clip added to reference set.`);
+      } catch (err) {
+        showToast('Re-confirm failed: ' + err.message);
+      } finally {
+        reconfirmBtn.disabled = false;
+      }
+    });
+    right.appendChild(reconfirmBtn);
+  }
+
   const chevron = document.createElement('span');
   chevron.className = 'history-chevron';
   chevron.textContent = '▼';

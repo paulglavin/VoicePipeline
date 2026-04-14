@@ -496,6 +496,18 @@ body {
   padding: 4px 10px;
 }
 
+.btn--reconfirm {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  font-size: .85rem;
+  color: var(--clr-text-muted);
+  border-color: var(--clr-border);
+}
+.btn--reconfirm:hover:not(:disabled) {
+  color: var(--clr-primary);
+  border-color: var(--clr-primary);
+}
+
 /* -----------------------------------------------------------------------
    History trace panel
    ----------------------------------------------------------------------- */
