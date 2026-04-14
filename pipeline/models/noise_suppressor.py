@@ -198,14 +198,14 @@ class NoiseSuppressor:
             est_spec  = (mag * mask1).squeeze() * np.exp(1j * phase)  # (257,)
             est_frame = np.fft.irfft(est_spec).reshape(1, 1, -1).astype(np.float32)  # (1,1,512)
 
-            # ── Stage 2: time-domain masking ─────────────────────────────
+            # ── Stage 2: time-domain enhancement ─────────────────────────
+            # model_2 outputs the enhanced signal directly (mask applied
+            # internally) — do NOT multiply est_frame by it again.
             inputs2[in_names2[0]] = est_frame
             out2 = self._sess2.run(None, inputs2)
-            mask2 = out2[0]                                        # (1,1,512)
+            out_block = out2[0][0, 0]                              # (512,) enhanced signal
             for j, name in enumerate(in_names2[1:], start=1):
                 inputs2[name] = out2[j]
-
-            out_block = (est_frame * mask2)[0, 0]                  # (512,)
 
             # ── 50% overlap-add synthesis (matches DTLN reference) ───────
             out_buffer[:_BLOCK_SHIFT] += out_block[:_BLOCK_SHIFT]
