@@ -494,7 +494,10 @@ function buildHistoryRow(item) {
   const row = document.createElement('div');
   row.className = 'history-row';
 
-  // Left side: transcript + meta
+  // ── Summary (always visible, click to expand) ──────────────────────
+  const summary = document.createElement('div');
+  summary.className = 'history-summary';
+
   const left = document.createElement('div');
   left.className = 'history-left';
 
@@ -518,10 +521,8 @@ function buildHistoryRow(item) {
     document.createTextNode(`${formatDateTime(item.recorded_at)} · ${formatDuration(item.duration_ms)} · `),
     speakerSpan,
   );
-
   left.append(transcript, meta);
 
-  // Right side: status badge + optional play
   const right = document.createElement('div');
   right.className = 'history-right';
 
@@ -536,8 +537,72 @@ function buildHistoryRow(item) {
     right.appendChild(playBtn);
   }
 
-  row.append(left, right);
+  const chevron = document.createElement('span');
+  chevron.className = 'history-chevron';
+  chevron.textContent = '▼';
+  right.appendChild(chevron);
+
+  summary.append(left, right);
+
+  // ── Trace panel (expandable) ────────────────────────────────────────
+  const trace = document.createElement('div');
+  trace.className = 'history-trace';
+
+  // VAD confidence
+  const vadPct = Math.round(item.vad_confidence * 100);
+  trace.appendChild(traceItem('VAD confidence',
+    `${vadPct}%`,
+    vadPct >= 70 ? 'good' : 'warn',
+  ));
+
+  // Pipeline speaker match
+  if (item.match_confidence != null) {
+    const pct = Math.round(item.match_confidence * 100);
+    const label = item.matched_speaker
+      ? `${item.matched_speaker} — ${pct}%`
+      : `No match (best: ${pct}%)`;
+    trace.appendChild(traceItem('Pipeline match', label, item.matched_speaker ? 'good' : 'warn'));
+  } else {
+    trace.appendChild(traceItem('Pipeline match', 'No enrolled speakers', 'none'));
+  }
+
+  // Resolution
+  if (item.current_action) {
+    const by = item.current_assigned_to ? ` → ${item.current_assigned_to}` : '';
+    trace.appendChild(traceItem('Resolution', `${item.current_action}${by}`));
+  } else {
+    trace.appendChild(traceItem('Resolution', 'Unresolved', 'none'));
+  }
+
+  // Audio duration
+  trace.appendChild(traceItem('Audio duration', formatDuration(item.duration_ms)));
+
+  // Resolved at
+  if (item.last_resolved_at) {
+    trace.appendChild(traceItem('Resolved at', formatDateTime(item.last_resolved_at)));
+  }
+
+  // Toggle expand on summary click, but don't swallow play-button clicks
+  summary.addEventListener('click', e => {
+    if (e.target.closest('.btn-play')) return;
+    row.classList.toggle('is-expanded');
+  });
+
+  row.append(summary, trace);
   return row;
+}
+
+function traceItem(label, value, modifier) {
+  const el = document.createElement('div');
+  el.className = 'trace-item';
+  const l = document.createElement('div');
+  l.className = 'trace-label';
+  l.textContent = label;
+  const v = document.createElement('div');
+  v.className = 'trace-value' + (modifier ? ` trace-value--${modifier}` : '');
+  v.textContent = value;
+  el.append(l, v);
+  return el;
 }
 
 /* ---------------------------------------------------------------------------

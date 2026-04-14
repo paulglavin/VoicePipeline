@@ -334,9 +334,11 @@ def _update_speaker_stats(
         return
 
     count = existing["interaction_count"]
-    old_avg = existing["avg_confidence"] or 0.0
-    confidence = match_confidence or 0.0
-    new_avg = (old_avg * count + confidence) / (count + 1)
+    if match_confidence is not None:
+        old_avg = existing["avg_confidence"] or 0.0
+        new_avg = (old_avg * count + match_confidence) / (count + 1)
+    else:
+        new_avg = existing["avg_confidence"]   # preserve existing, don't factor in manual confirms
 
     conn.execute(
         """
@@ -347,8 +349,10 @@ def _update_speaker_stats(
         (now, new_avg, name),
     )
 
-    # Rotate reference clips for high-confidence interactions
-    if audio_path and match_confidence and match_confidence >= 0.85:
+    # Manual confirm/assign always adds to reference clips — the user is explicitly
+    # saying "this is me", so we trust it regardless of pipeline confidence.
+    # (The 0.85 threshold applies only to auto-confirmation in writer.py.)
+    if audio_path:
         clips: list[str] = json.loads(existing["reference_clips"])
         clips.append(audio_path)
         row = conn.execute(
