@@ -18,6 +18,7 @@ Manual setup (if auto-download fails):
 """
 
 import logging
+import os
 import urllib.request
 from pathlib import Path
 
@@ -28,6 +29,14 @@ logger = logging.getLogger(__name__)
 _SR          = 16_000
 _BLOCK_LEN   = 512    # 32 ms at 16 kHz
 _BLOCK_SHIFT = 256    # 50% overlap
+
+# Wet/dry blend ratio — how much of the DTLN output to mix with the original.
+#   1.0 = full DTLN (maximum suppression, most artefacts)
+#   0.0 = passthrough (no suppression, no artefacts)
+#   0.5 = balanced default — real-world noise reduction with minimal musical noise
+# Override with the DTLN_MIX environment variable.
+_DEFAULT_MIX = 0.5
+_MIX = float(os.getenv("DTLN_MIX", str(_DEFAULT_MIX)))
 
 # Official DTLN pretrained ONNX weights — breizhn/DTLN on GitHub
 _GITHUB_BASE = (
@@ -104,6 +113,7 @@ class NoiseSuppressor:
                 inputs  = [(i.name, i.shape) for i in sess.get_inputs()]
                 outputs = [(o.name, o.shape) for o in sess.get_outputs()]
                 logger.info("DTLN %s  inputs=%s  outputs=%s", name, inputs, outputs)
+            logger.info("DTLN ready — wet/dry mix=%.2f (set DTLN_MIX env var to adjust)", _MIX)
 
         except Exception as exc:
             logger.warning("DTLN: failed to load ONNX sessions (%s) — passthrough mode", exc)
@@ -132,14 +142,19 @@ class NoiseSuppressor:
                 np.frombuffer(pcm_bytes, dtype=np.int16)
                 .astype(np.float32) / 32768.0
             )
-            clean = self._run_dtln(audio)
+            enhanced = self._run_dtln(audio)
 
             # Safety: if DTLN produces NaN/Inf return the original
-            if not np.all(np.isfinite(clean)):
+            if not np.all(np.isfinite(enhanced)):
                 logger.warning("DTLN: non-finite output — returning original audio")
                 return pcm_bytes
 
-            out_i16 = (np.clip(clean, -1.0, 1.0) * 32767.0).astype(np.int16)
+            # Wet/dry blend — reduces musical-noise artefacts while preserving
+            # the noise-suppression benefit.  _MIX=1.0 → full DTLN output;
+            # _MIX=0.0 → passthrough.  Tune with DTLN_MIX env var.
+            mixed = _MIX * enhanced + (1.0 - _MIX) * audio
+
+            out_i16 = (np.clip(mixed, -1.0, 1.0) * 32767.0).astype(np.int16)
             return out_i16.tobytes()
 
         except Exception as exc:
