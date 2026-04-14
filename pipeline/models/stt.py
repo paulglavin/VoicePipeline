@@ -4,10 +4,10 @@ stt.py — IBM Granite 4.0 1B Speech STT wrapper.
 Model: ibm-granite/granite-4.0-1b-speech (HuggingFace)
 Downloaded on first run; cached in MODEL_DIR/granite_stt/.
 
-Uses AutoProcessor + AutoModelForSpeechSeq2Seq directly rather than the
-HuggingFace pipeline API. The pipeline API passes `sampling_rate` as a
-keyword argument to the feature extractor, but GraniteSpeechFeatureExtractor
-does not accept that parameter — using the model directly avoids the issue.
+Granite 4.0 Speech is a multimodal LLM — the processor requires a chat-
+templated text prompt alongside the audio tensor. The <|audio|> token in
+the prompt is where audio features are injected. Output decoding strips the
+input tokens so we only decode the newly generated text.
 
 transcribe() is synchronous and blocking — call via asyncio.to_thread.
 """
@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 _SR       = 16_000
 _MODEL_ID = "ibm-granite/granite-4.0-1b-speech"
+_PROMPT   = "<|audio|>can you transcribe the speech into a written format?"
 
 
 class SpeechToText:
@@ -34,16 +35,17 @@ class SpeechToText:
     def __init__(self, model_dir: str) -> None:
         self._model     = None
         self._processor = None
+        self._tokenizer = None
         self._device    = "cpu"
+        self._prompt    = None
         cache_dir       = str(Path(model_dir) / "granite_stt")
 
         try:
             import torch
             from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
 
-            cuda          = torch.cuda.is_available()
-            self._device  = "cuda" if cuda else "cpu"
-            self._dtype   = torch.float16 if cuda else torch.float32
+            cuda         = torch.cuda.is_available()
+            self._device = "cuda" if cuda else "cpu"
 
             logger.info(
                 "Loading %s on %s — first run downloads ~2 GB",
@@ -55,14 +57,22 @@ class SpeechToText:
                 cache_dir=cache_dir,
                 trust_remote_code=True,
             )
+            self._tokenizer = self._processor.tokenizer
             self._model = AutoModelForSpeechSeq2Seq.from_pretrained(
                 _MODEL_ID,
                 cache_dir=cache_dir,
                 trust_remote_code=True,
-                torch_dtype=self._dtype,
-                low_cpu_mem_usage=True,
-            ).to(self._device)
+                torch_dtype=torch.bfloat16,
+                device_map=self._device,
+            )
             self._model.eval()
+
+            # Pre-build the prompt once — apply_chat_template is pure text processing
+            chat = [{"role": "user", "content": _PROMPT}]
+            self._prompt = self._tokenizer.apply_chat_template(
+                chat, tokenize=False, add_generation_prompt=True
+            )
+
             logger.info("Granite STT ready on %s", self._device)
 
         except Exception as exc:
@@ -87,23 +97,35 @@ class SpeechToText:
         try:
             import torch
 
-            audio = (
-                np.frombuffer(pcm_bytes, dtype=np.int16)
-                .astype(np.float32) / 32768.0
-            )
-            inputs = self._processor(audio, return_tensors="pt")
-            inputs = {k: v.to(self._device) for k, v in inputs.items()}
+            # Convert PCM bytes → float32 tensor, shape [1, samples] (mono)
+            wav = torch.from_numpy(
+                np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+            ).unsqueeze(0)
+
+            inputs = self._processor(
+                self._prompt,
+                wav,
+                device=self._device,
+                return_tensors="pt",
+            ).to(self._device)
+
+            num_input_tokens = inputs["input_ids"].shape[-1]
 
             with torch.no_grad():
-                generated = self._model.generate(
+                outputs = self._model.generate(
                     **inputs,
-                    task="transcribe",
-                    language="english",
+                    max_new_tokens=200,
+                    do_sample=False,
+                    num_beams=1,
                 )
 
-            text = self._processor.tokenizer.decode(
-                generated[0], skip_special_tokens=True
-            ).strip()
+            new_tokens = outputs[0, num_input_tokens:].unsqueeze(0)
+            text = self._tokenizer.batch_decode(
+                new_tokens,
+                add_special_tokens=False,
+                skip_special_tokens=True,
+            )[0].strip()
+
             logger.debug("STT: %r", text)
             return text
 
