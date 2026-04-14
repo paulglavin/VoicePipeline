@@ -139,8 +139,15 @@ class InteractionWriter:
     # ------------------------------------------------------------------
 
     def _write_audio(self, interaction_id: str, audio_bytes: bytes) -> Path:
+        import wave, io
         path = self.audio_dir / f"{interaction_id}.wav"
-        path.write_bytes(audio_bytes)
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)       # 16-bit
+            wf.setframerate(16_000)  # 16 kHz
+            wf.writeframes(audio_bytes)
+        path.write_bytes(buf.getvalue())
         return path
 
     def _write_embedding(
