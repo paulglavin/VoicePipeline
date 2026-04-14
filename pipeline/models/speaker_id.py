@@ -40,19 +40,22 @@ class SpeakerIdentifier:
     def __init__(self, model_dir: str, db_path: str) -> None:
         self._db_path  = db_path
         self._model    = None
+        self._device   = "cpu"
         self._cache:   dict[str, np.ndarray] = {}
         self._cache_t  = 0.0
         self._lock     = threading.Lock()
         self._save_dir = str(Path(model_dir) / "speechbrain")
 
         try:
+            import torch
             from speechbrain.inference.speaker import EncoderClassifier
+            self._device = "cuda" if torch.cuda.is_available() else "cpu"
             self._model = EncoderClassifier.from_hparams(
                 source=_HF_MODEL,
                 savedir=self._save_dir,
-                run_opts={"device": "cpu"},
+                run_opts={"device": self._device},
             )
-            logger.info("SpeechBrain ECAPA-TDNN loaded on cpu from %s", _HF_MODEL)
+            logger.info("SpeechBrain ECAPA-TDNN loaded on %s from %s", self._device, _HF_MODEL)
         except Exception as exc:
             logger.warning(
                 "SpeakerIdentifier init failed (%s) — unknown-speaker mode", exc
@@ -134,10 +137,11 @@ class SpeakerIdentifier:
             else:
                 signal = torch.from_numpy(audio).unsqueeze(0)  # (1, N)
 
+            signal = signal.to(self._device)
             with torch.no_grad():
                 emb = self._model.encode_batch(signal)   # (1, 1, dim)
 
-            arr = emb.squeeze().numpy().astype(np.float32)
+            arr = emb.squeeze().cpu().numpy().astype(np.float32)
             return _l2(arr)
         except Exception as exc:
             logger.warning("Embedding failed for %s: %s", path, exc)
@@ -158,12 +162,12 @@ class SpeakerIdentifier:
                 np.frombuffer(pcm_bytes, dtype=np.int16)
                 .astype(np.float32) / 32768.0
             )
-            tensor = torch.from_numpy(audio).unsqueeze(0)   # (1, N)
+            tensor = torch.from_numpy(audio).unsqueeze(0).to(self._device)   # (1, N)
 
             with torch.no_grad():
                 emb = self._model.encode_batch(tensor)      # (1, 1, dim)
 
-            arr = emb.squeeze().numpy().astype(np.float32)
+            arr = emb.squeeze().cpu().numpy().astype(np.float32)
             return _l2(arr)
 
         except Exception as exc:
