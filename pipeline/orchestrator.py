@@ -81,6 +81,10 @@ class VoicePipelineOrchestrator:
             logger.warning("Noise suppression error: %s", exc)
             clean_pcm = raw_pcm
         ns_ms = round((time.monotonic() - t0) * 1000)
+        logger.info(
+            "NS: active=%s  in=%d bytes  out=%d bytes  %dms",
+            self._ns.available, len(raw_pcm), len(clean_pcm), ns_ms,
+        )
 
         # ── 2. Voice activity detection ─────────────────────────────────
         t0 = time.monotonic()
@@ -90,9 +94,13 @@ class VoicePipelineOrchestrator:
             logger.warning("VAD error: %s", exc)
             speech_pcm, vad_conf = clean_pcm, 0.5
         vad_ms = round((time.monotonic() - t0) * 1000)
+        logger.info(
+            "VAD: speech=%d bytes  conf=%.3f  %dms",
+            len(speech_pcm) if speech_pcm else 0, vad_conf, vad_ms,
+        )
 
         if not speech_pcm:
-            logger.debug("Orchestrator: VAD found no speech — discarding utterance")
+            logger.info("Orchestrator: VAD found no speech — discarding utterance")
             return None
 
         # ── 3. Speaker identification ───────────────────────────────────
@@ -116,7 +124,7 @@ class VoicePipelineOrchestrator:
         stt_ms = round((time.monotonic() - t0) * 1000)
 
         if not transcript.strip():
-            logger.debug("Orchestrator: empty transcript — discarding utterance")
+            logger.info("Orchestrator: STT returned empty transcript — discarding utterance")
             return None
 
         # ── 5. Compute duration ─────────────────────────────────────────
