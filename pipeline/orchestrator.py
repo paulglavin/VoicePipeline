@@ -16,7 +16,8 @@ InteractionWriter.write() is fire-and-forget (asyncio.create_task).
 
 import asyncio
 import logging
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -35,11 +36,12 @@ _SAMPLE_RATE = 16_000
 
 @dataclass
 class PipelineResult:
-    transcript:      str
-    duration_ms:     int
-    vad_confidence:  float
-    matched_speaker: str | None
+    transcript:       str
+    duration_ms:      int
+    vad_confidence:   float
+    matched_speaker:  str | None
     match_confidence: float | None
+    timings:          dict = field(default_factory=dict)
 
 
 class VoicePipelineOrchestrator:
@@ -69,25 +71,32 @@ class VoicePipelineOrchestrator:
         if not raw_pcm:
             return None
 
+        t_start = time.monotonic()
+
         # ── 1. Noise suppression ────────────────────────────────────────
+        t0 = time.monotonic()
         try:
             clean_pcm = await asyncio.to_thread(self._ns.process, raw_pcm)
         except Exception as exc:
             logger.warning("Noise suppression error: %s", exc)
             clean_pcm = raw_pcm
+        ns_ms = round((time.monotonic() - t0) * 1000)
 
         # ── 2. Voice activity detection ─────────────────────────────────
+        t0 = time.monotonic()
         try:
             speech_pcm, vad_conf = await asyncio.to_thread(self._vad.process, clean_pcm)
         except Exception as exc:
             logger.warning("VAD error: %s", exc)
             speech_pcm, vad_conf = clean_pcm, 0.5
+        vad_ms = round((time.monotonic() - t0) * 1000)
 
         if not speech_pcm:
             logger.debug("Orchestrator: VAD found no speech — discarding utterance")
             return None
 
         # ── 3. Speaker identification ───────────────────────────────────
+        t0 = time.monotonic()
         try:
             speaker, match_conf, embedding = await asyncio.to_thread(
                 self._sid.identify, speech_pcm
@@ -95,13 +104,16 @@ class VoicePipelineOrchestrator:
         except Exception as exc:
             logger.warning("Speaker ID error: %s", exc)
             speaker, match_conf, embedding = None, None, None
+        sid_ms = round((time.monotonic() - t0) * 1000)
 
         # ── 4. Speech-to-text ───────────────────────────────────────────
+        t0 = time.monotonic()
         try:
             transcript = await asyncio.to_thread(self._stt.transcribe, speech_pcm)
         except Exception as exc:
             logger.warning("STT error: %s", exc)
             transcript = ""
+        stt_ms = round((time.monotonic() - t0) * 1000)
 
         if not transcript.strip():
             logger.debug("Orchestrator: empty transcript — discarding utterance")
@@ -110,6 +122,9 @@ class VoicePipelineOrchestrator:
         # ── 5. Compute duration ─────────────────────────────────────────
         num_samples  = len(speech_pcm) // 2          # 16-bit = 2 bytes/sample
         duration_ms  = max(1, int(num_samples / _SAMPLE_RATE * 1000))
+        total_ms     = round((time.monotonic() - t_start) * 1000)
+
+        timings = {"ns": ns_ms, "vad": vad_ms, "sid": sid_ms, "stt": stt_ms, "total": total_ms}
 
         # ── 6. Write (fire-and-forget) ──────────────────────────────────
         asyncio.create_task(
@@ -120,6 +135,7 @@ class VoicePipelineOrchestrator:
                 vad_confidence=vad_conf,
                 matched_speaker=speaker,
                 match_confidence=match_conf,
+                timings=timings,
                 embedding=np.array(embedding, dtype=np.float32)
                           if embedding is not None else None,
             )
@@ -131,12 +147,14 @@ class VoicePipelineOrchestrator:
             vad_confidence=vad_conf,
             matched_speaker=speaker,
             match_confidence=match_conf,
+            timings=timings,
         )
         logger.info(
-            "Pipeline: %r | speaker=%s conf=%.2f | dur=%dms",
+            "Pipeline: %r | speaker=%s conf=%.2f | dur=%dms | ns=%dms vad=%dms sid=%dms stt=%dms total=%dms",
             transcript,
             speaker or "unknown",
             match_conf or 0.0,
             duration_ms,
+            ns_ms, vad_ms, sid_ms, stt_ms, total_ms,
         )
         return result

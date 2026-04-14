@@ -35,8 +35,11 @@ CREATE TABLE IF NOT EXISTS interactions (
     status           TEXT NOT NULL
         CHECK(status IN ('pending','resolved','dismissed')),
     created_at       TEXT NOT NULL
-        DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+        DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    timings          TEXT
 );
+
+
 
 CREATE TABLE IF NOT EXISTS resolutions (
     id              TEXT PRIMARY KEY,
@@ -114,6 +117,15 @@ def init(db_path: str) -> None:
     conn = sqlite3.connect(db_path)
     try:
         conn.executescript(SCHEMA)
+        # Migrate existing databases: add columns introduced after initial release
+        for migration in (
+            "ALTER TABLE interactions ADD COLUMN timings TEXT",
+        ):
+            try:
+                conn.execute(migration)
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass  # column already exists
         conn.commit()
         print(f"Database initialised at {db_path}")
     finally:

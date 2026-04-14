@@ -65,6 +65,7 @@ class InteractionWriter:
         matched_speaker: str | None,
         match_confidence: float | None,
         embedding: np.ndarray | None,
+        timings: dict | None = None,
     ) -> str:
         """
         Write a completed interaction record.
@@ -108,6 +109,7 @@ class InteractionWriter:
                 embedding_blob,
                 str(embedding_path) if embedding_path else None,
                 status,
+                json.dumps(timings) if timings else None,
             )
 
             # If auto-resolved (high confidence), write a resolution record
@@ -185,6 +187,7 @@ class InteractionWriter:
         embedding_blob: bytes | None,
         embedding_path: str | None,
         status: str,
+        timings_json: str | None = None,
     ) -> None:
         with self._get_connection() as conn:
             conn.execute(
@@ -192,11 +195,11 @@ class InteractionWriter:
                 INSERT INTO interactions (
                     id, recorded_at, audio_path, transcript, duration_ms,
                     vad_confidence, matched_speaker, match_confidence,
-                    embedding_blob, embedding_path, status, created_at
+                    embedding_blob, embedding_path, status, created_at, timings
                 ) VALUES (
                     ?, ?, ?, ?, ?,
                     ?, ?, ?,
-                    ?, ?, ?, ?
+                    ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -212,6 +215,7 @@ class InteractionWriter:
                     embedding_path,
                     status,
                     recorded_at,
+                    timings_json,
                 ),
             )
 

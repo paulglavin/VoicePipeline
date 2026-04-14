@@ -601,6 +601,16 @@ function buildHistoryRow(item) {
   // Audio duration
   trace.appendChild(traceItem('Audio duration', formatDuration(item.duration_ms)));
 
+  // Pipeline timings
+  if (item.timings) {
+    const t = item.timings;
+    trace.appendChild(traceItem('Total processing', `${t.total}ms`));
+    trace.appendChild(traceItem('Noise suppressor', `${t.ns}ms`));
+    trace.appendChild(traceItem('VAD', `${t.vad}ms`));
+    trace.appendChild(traceItem('Speaker ID', `${t.sid}ms`));
+    trace.appendChild(traceItem('STT', `${t.stt}ms`));
+  }
+
   // Resolved at
   if (item.last_resolved_at) {
     trace.appendChild(traceItem('Resolved at', formatDateTime(item.last_resolved_at)));

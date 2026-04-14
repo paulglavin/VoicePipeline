@@ -32,6 +32,7 @@ from pipeline.retention import RetentionJob
 from pipeline.writer import InteractionWriter
 from pipeline.wyoming_server import WyomingServer
 
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -240,6 +241,7 @@ def _fetch_history(
             "current_action": row["current_action"],
             "current_assigned_to": row["current_assigned_to"],
             "last_resolved_at": row["last_resolved_at"],
+            "timings": json.loads(row["timings"]) if row["timings"] else None,
         }
         for row in rows
     ]

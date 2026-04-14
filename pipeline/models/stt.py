@@ -62,7 +62,7 @@ class SpeechToText:
                 _MODEL_ID,
                 cache_dir=cache_dir,
                 trust_remote_code=True,
-                torch_dtype=torch.bfloat16,
+                dtype=torch.bfloat16,
                 device_map=self._device,
             )
             self._model.eval()
