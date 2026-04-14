@@ -109,6 +109,7 @@ class SettingsResponse(BaseModel):
     reference_clips_per_speaker: int
     match_threshold: float
     confirm_threshold: float
+    personality_processing: bool
 
 
 class SettingsUpdate(BaseModel):
@@ -117,6 +118,7 @@ class SettingsUpdate(BaseModel):
     reference_clips_per_speaker: int | None = None
     match_threshold: float | None = None
     confirm_threshold: float | None = None
+    personality_processing: bool | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -422,6 +424,7 @@ def _settings_response(raw: dict[str, str]) -> SettingsResponse:
         reference_clips_per_speaker=int(raw.get("reference_clips_per_speaker", 5)),
         match_threshold=float(raw.get("match_threshold", 0.50)),
         confirm_threshold=float(raw.get("confirm_threshold", 0.75)),
+        personality_processing=raw.get("personality_processing", "false").lower() == "true",
     )
 
 
@@ -455,7 +458,7 @@ async def lifespan(app: FastAPI):
     app.state.sid = sid
 
     # ── Wyoming STT server ──────────────────────────────────────────────
-    wyoming      = WyomingServer(orchestrator, host=WYOMING_HOST, port=WYOMING_PORT)
+    wyoming      = WyomingServer(orchestrator, DB_PATH, host=WYOMING_HOST, port=WYOMING_PORT)
     await wyoming.start()
     wyoming_task = asyncio.create_task(wyoming.serve_forever())
 

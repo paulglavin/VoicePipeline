@@ -25,6 +25,7 @@ Usage:
 
 import asyncio
 import logging
+import sqlite3
 from functools import partial
 
 from wyoming.audio import AudioChunk, AudioStart, AudioStop
@@ -73,6 +74,7 @@ class _PipelineEventHandler(AsyncEventHandler):
         self,
         wyoming_info: Info,
         orchestrator: VoicePipelineOrchestrator,
+        db_path: str,
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
         **kwargs,
@@ -80,6 +82,7 @@ class _PipelineEventHandler(AsyncEventHandler):
         super().__init__(reader, writer, **kwargs)
         self._wyoming_info = wyoming_info
         self._orchestrator = orchestrator
+        self._db_path      = db_path
         self._chunks:      list[bytes] = []
         self._sample_rate: int  = 16_000
         self._channels:    int  = 1
@@ -120,6 +123,9 @@ class _PipelineEventHandler(AsyncEventHandler):
             result = await self._orchestrator.process(raw_pcm)
             text   = result.transcript if result else ""
 
+            if result and result.matched_speaker and self._personality_enabled():
+                text = f"{result.matched_speaker}: {text}"
+
             await self.write_event(Transcript(text=text).event())
             logger.info("Wyoming: Transcript sent: %r", text)
 
@@ -130,16 +136,31 @@ class _PipelineEventHandler(AsyncEventHandler):
         return True
 
 
+    def _personality_enabled(self) -> bool:
+        """Read personality_processing setting directly from DB (fast SQLite read)."""
+        try:
+            conn = sqlite3.connect(self._db_path)
+            row  = conn.execute(
+                "SELECT value FROM settings WHERE key = 'personality_processing'"
+            ).fetchone()
+            conn.close()
+            return row is not None and row[0].lower() == "true"
+        except Exception:
+            return False
+
+
 class WyomingServer:
     """Manages the Wyoming TCP server lifecycle."""
 
     def __init__(
         self,
         orchestrator: VoicePipelineOrchestrator,
+        db_path: str,
         host: str = "0.0.0.0",
         port: int = 10_300,
     ) -> None:
         self._orchestrator = orchestrator
+        self._db_path      = db_path
         self._uri          = f"tcp://{host}:{port}"
         self._server:  AsyncServer | None = None
 
@@ -151,7 +172,7 @@ class WyomingServer:
         if self._server is None:
             raise RuntimeError("Call start() before serve_forever()")
         await self._server.run(
-            partial(_PipelineEventHandler, _INFO, self._orchestrator)
+            partial(_PipelineEventHandler, _INFO, self._orchestrator, self._db_path)
         )
 
     async def stop(self) -> None:

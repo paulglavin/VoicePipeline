@@ -91,6 +91,17 @@
             <p class="setting-hint">Maximum clips retained per enrolled speaker. Oldest are rotated out first.</p>
           </div>
 
+          <h2>Home Assistant Integration</h2>
+
+          <div class="setting-row setting-row--toggle">
+            <label for="s-personality">Enable personality processing</label>
+            <label class="toggle-switch">
+              <input type="checkbox" id="s-personality">
+              <span class="toggle-slider"></span>
+            </label>
+            <p class="setting-hint">Prefixes the transcript sent to HA with the identified speaker's name (e.g. <em>Paul: turn the lights off</em>). Requires an LLM conversation agent in HA — disable if using "Process locally".</p>
+          </div>
+
           <div class="settings-actions">
             <button class="btn btn--primary" type="submit">Save settings</button>
             <span class="settings-saved" id="settings-saved" hidden>Saved.</span>

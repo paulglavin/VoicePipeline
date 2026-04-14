@@ -646,11 +646,12 @@ function traceItem(label, value, modifier) {
 async function loadSettings() {
   try {
     const s = await apiFetch('/settings');
-    document.getElementById('s-match').value    = s.match_threshold;
-    document.getElementById('s-confirm').value  = s.confirm_threshold;
-    document.getElementById('s-pending').value  = s.pending_retention_days;
-    document.getElementById('s-resolved').value = s.resolved_retention_days;
-    document.getElementById('s-clips').value    = s.reference_clips_per_speaker;
+    document.getElementById('s-match').value         = s.match_threshold;
+    document.getElementById('s-confirm').value        = s.confirm_threshold;
+    document.getElementById('s-pending').value        = s.pending_retention_days;
+    document.getElementById('s-resolved').value       = s.resolved_retention_days;
+    document.getElementById('s-clips').value          = s.reference_clips_per_speaker;
+    document.getElementById('s-personality').checked  = s.personality_processing;
     updateSettingsWarnings(s.resolved_retention_days);
   } catch (err) {
     showToast('Failed to load settings: ' + err.message);
@@ -676,6 +677,7 @@ document.getElementById('settings-form').addEventListener('submit', async e => {
       pending_retention_days:      parseInt(document.getElementById('s-pending').value,  10),
       resolved_retention_days:     parseInt(document.getElementById('s-resolved').value, 10),
       reference_clips_per_speaker: parseInt(document.getElementById('s-clips').value,    10),
+      personality_processing:      document.getElementById('s-personality').checked,
     };
     await apiFetch('/settings', {
       method: 'PUT',
