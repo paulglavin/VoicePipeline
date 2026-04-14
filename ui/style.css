@@ -515,6 +515,7 @@ body {
   border: 1px solid var(--clr-border);
   border-radius: 6px;
   font-size: .875rem;
+  background: var(--clr-surface);
   color: var(--clr-text);
 }
 .setting-input:focus {

@@ -75,6 +75,11 @@ class SpeakerIdentifier:
                 return
             self._rebuild_cache()
 
+    def force_refresh(self) -> None:
+        """Invalidate the cache immediately, bypassing the TTL guard."""
+        with self._lock:
+            self._cache_t = 0.0
+
     def _rebuild_cache(self) -> None:
         """Must be called with self._lock held."""
         new_cache: dict[str, np.ndarray] = {}

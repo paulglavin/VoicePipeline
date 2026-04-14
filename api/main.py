@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import APIRouter, FastAPI, HTTPException, Query
+from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -439,6 +439,7 @@ async def lifespan(app: FastAPI):
     writer       = InteractionWriter(db_path=DB_PATH, audio_dir=AUDIO_DIR,
                                      embedding_dir=EMBEDDING_DIR)
     orchestrator = VoicePipelineOrchestrator(ns, vad, sid, stt, writer)
+    app.state.sid = sid
 
     # ── Wyoming STT server ──────────────────────────────────────────────
     wyoming      = WyomingServer(orchestrator, host=WYOMING_HOST, port=WYOMING_PORT)
@@ -542,7 +543,7 @@ async def get_audio(interaction_id: str):
 
 
 @api.post("/interactions/{interaction_id}/resolve", response_model=ResolveResponse)
-async def resolve_interaction(interaction_id: str, body: ResolveRequest):
+async def resolve_interaction(interaction_id: str, body: ResolveRequest, request: Request):
     if body.action in ("confirm", "assign") and not body.assigned_to:
         raise HTTPException(
             status_code=422,
@@ -553,6 +554,9 @@ async def resolve_interaction(interaction_id: str, body: ResolveRequest):
         result = await asyncio.to_thread(_do_resolve, interaction_id, body.action, body.assigned_to)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+    if body.action in ("enrol", "confirm", "assign"):
+        request.app.state.sid.force_refresh()
 
     return result
 
