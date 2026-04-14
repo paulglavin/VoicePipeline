@@ -211,6 +211,7 @@ def _fetch_history(
             f"""
             SELECT i.id, i.recorded_at, i.transcript, i.duration_ms, i.vad_confidence,
                    i.matched_speaker, i.match_confidence, i.status, i.audio_path,
+                   i.timings,
                    r.action      AS current_action,
                    r.assigned_to AS current_assigned_to,
                    r.resolved_at AS last_resolved_at
