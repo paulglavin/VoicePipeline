@@ -77,10 +77,9 @@ class InteractionWriter:
         recorded_at = datetime.now(timezone.utc).isoformat()
 
         try:
-            # Determine initial status
-            # Unknown speaker or low confidence (<0.75) → pending
-            # Confident match (≥0.75) → resolved immediately as auto-confirmed
-            if matched_speaker is None or (match_confidence is not None and match_confidence < 0.75):
+            # Determine initial status — read confirm_threshold from settings
+            confirm_thresh = self._read_threshold("confirm_threshold", 0.75)
+            if matched_speaker is None or (match_confidence is not None and match_confidence < confirm_thresh):
                 status = "pending"
             else:
                 status = "resolved"
@@ -166,6 +165,16 @@ class InteractionWriter:
     # ------------------------------------------------------------------
     # Private — database writes
     # ------------------------------------------------------------------
+
+    def _read_threshold(self, key: str, default: float) -> float:
+        try:
+            with self._get_connection() as conn:
+                row = conn.execute(
+                    "SELECT value FROM settings WHERE key = ?", (key,)
+                ).fetchone()
+            return float(row["value"]) if row else default
+        except Exception:
+            return default
 
     def _get_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)

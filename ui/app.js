@@ -646,6 +646,8 @@ function traceItem(label, value, modifier) {
 async function loadSettings() {
   try {
     const s = await apiFetch('/settings');
+    document.getElementById('s-match').value    = s.match_threshold;
+    document.getElementById('s-confirm').value  = s.confirm_threshold;
     document.getElementById('s-pending').value  = s.pending_retention_days;
     document.getElementById('s-resolved').value = s.resolved_retention_days;
     document.getElementById('s-clips').value    = s.reference_clips_per_speaker;
@@ -669,9 +671,11 @@ document.getElementById('settings-form').addEventListener('submit', async e => {
   btn.disabled = true;
   try {
     const body = {
-      pending_retention_days:    parseInt(document.getElementById('s-pending').value,  10),
-      resolved_retention_days:   parseInt(document.getElementById('s-resolved').value, 10),
-      reference_clips_per_speaker: parseInt(document.getElementById('s-clips').value,  10),
+      match_threshold:             parseFloat(document.getElementById('s-match').value),
+      confirm_threshold:           parseFloat(document.getElementById('s-confirm').value),
+      pending_retention_days:      parseInt(document.getElementById('s-pending').value,  10),
+      resolved_retention_days:     parseInt(document.getElementById('s-resolved').value, 10),
+      reference_clips_per_speaker: parseInt(document.getElementById('s-clips').value,    10),
     };
     await apiFetch('/settings', {
       method: 'PUT',

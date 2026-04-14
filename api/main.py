@@ -107,12 +107,16 @@ class SettingsResponse(BaseModel):
     pending_retention_days: int
     resolved_retention_days: int
     reference_clips_per_speaker: int
+    match_threshold: float
+    confirm_threshold: float
 
 
 class SettingsUpdate(BaseModel):
     pending_retention_days: int | None = None
     resolved_retention_days: int | None = None
     reference_clips_per_speaker: int | None = None
+    match_threshold: float | None = None
+    confirm_threshold: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -416,6 +420,8 @@ def _settings_response(raw: dict[str, str]) -> SettingsResponse:
         pending_retention_days=int(raw.get("pending_retention_days", 7)),
         resolved_retention_days=int(raw.get("resolved_retention_days", 3)),
         reference_clips_per_speaker=int(raw.get("reference_clips_per_speaker", 5)),
+        match_threshold=float(raw.get("match_threshold", 0.50)),
+        confirm_threshold=float(raw.get("confirm_threshold", 0.75)),
     )
 
 

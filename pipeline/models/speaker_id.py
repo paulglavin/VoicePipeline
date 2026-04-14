@@ -25,7 +25,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 _SR           = 16_000
-_MATCH_THRESH = 0.75   # cosine similarity threshold — matches writer.py
+_MATCH_THRESH_DEFAULT = 0.50   # fallback if settings row is missing
 _CACHE_TTL    = 300    # seconds between speaker cache refreshes
 _HF_MODEL     = "speechbrain/spkrec-ecapa-voxceleb"
 
@@ -198,12 +198,25 @@ class SpeakerIdentifier:
                 best_score = score
                 best_name  = name
 
-        if best_score >= _MATCH_THRESH:
+        match_thresh = self._read_threshold("match_threshold", _MATCH_THRESH_DEFAULT)
+
+        if best_score >= match_thresh:
             logger.debug("Speaker identified: %s (score=%.3f)", best_name, best_score)
             return best_name, best_score, embedding
 
         logger.debug("No match above threshold (best=%s score=%.3f)", best_name, best_score)
         return None, best_score if best_score >= 0 else None, embedding
+
+    def _read_threshold(self, key: str, default: float) -> float:
+        try:
+            conn = sqlite3.connect(self._db_path)
+            row  = conn.execute(
+                "SELECT value FROM settings WHERE key = ?", (key,)
+            ).fetchone()
+            conn.close()
+            return float(row["value"]) if row else default
+        except Exception:
+            return default
 
 
 # ---------------------------------------------------------------------------

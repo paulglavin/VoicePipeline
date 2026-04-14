@@ -107,6 +107,8 @@ LEFT JOIN resolutions r ON r.id = (
 INSERT OR IGNORE INTO settings VALUES ('pending_retention_days',       '7');
 INSERT OR IGNORE INTO settings VALUES ('resolved_retention_days',      '3');
 INSERT OR IGNORE INTO settings VALUES ('reference_clips_per_speaker',  '5');
+INSERT OR IGNORE INTO settings VALUES ('match_threshold',              '0.50');
+INSERT OR IGNORE INTO settings VALUES ('confirm_threshold',            '0.75');
 """
 
 
