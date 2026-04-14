@@ -117,14 +117,22 @@ class SpeakerIdentifier:
             logger.debug("Reference clip missing (retention purged?): %s", path)
             return None
         try:
+            import wave
             import torch
-            import torchaudio
 
-            signal, sr = torchaudio.load(path)
+            with wave.open(path, "rb") as wf:
+                raw = wf.readframes(wf.getnframes())
+                sr  = wf.getframerate()
+
+            audio = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+
             if sr != _SR:
+                # Simple resample via torch if rate differs
+                signal = torch.from_numpy(audio).unsqueeze(0)
+                import torchaudio
                 signal = torchaudio.functional.resample(signal, sr, _SR)
-            if signal.shape[0] > 1:
-                signal = signal.mean(dim=0, keepdim=True)
+            else:
+                signal = torch.from_numpy(audio).unsqueeze(0)  # (1, N)
 
             with torch.no_grad():
                 emb = self._model.encode_batch(signal)   # (1, 1, dim)
@@ -132,7 +140,7 @@ class SpeakerIdentifier:
             arr = emb.squeeze().numpy().astype(np.float32)
             return _l2(arr)
         except Exception as exc:
-            logger.debug("Embedding failed for %s: %s", path, exc)
+            logger.warning("Embedding failed for %s: %s", path, exc)
             return None
 
     def extract_embedding(self, pcm_bytes: bytes) -> np.ndarray | None:
