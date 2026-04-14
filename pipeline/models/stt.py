@@ -101,7 +101,7 @@ class SpeechToText:
                     language="english",
                 )
 
-            text = self._processor.decode(
+            text = self._processor.tokenizer.decode(
                 generated[0], skip_special_tokens=True
             ).strip()
             logger.debug("STT: %r", text)
