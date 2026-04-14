@@ -1,168 +1,136 @@
 """
-noise_suppressor.py — GTCRN noise suppression wrapper.
+noise_suppressor.py — DTLN ONNX noise suppression wrapper.
 
-Architecture: Gated Temporal Convolutional Recurrent Network (GTCRN-lite).
-Reference: https://github.com/Xiaobin-Rong/gtcrn
+DTLN (Dual-signal Transformation LSTM Network) by Nils L. Westhausen.
+Reference: https://github.com/breizhn/DTLN
 
-Pretrained weights must be placed manually at MODEL_DIR/gtcrn/gtcrn_lite.pth.
-If the file is absent the suppressor runs in passthrough mode (no suppression)
-rather than degrading audio with untrained weights.
+Architecture: two sequential LSTM stages — frequency domain then time domain.
+Processes audio in 32ms frames (512 samples at 16 kHz) with 50% overlap.
+Causal, real-time capable, designed for 16 kHz speech.
+
+Models are downloaded automatically on first run to MODEL_DIR/dtln/.
+If download fails the suppressor runs in passthrough mode.
+
+Manual setup (if auto-download fails):
+    1. Clone DTLN: git clone https://github.com/breizhn/DTLN
+    2. pip install tensorflow tf2onnx
+    3. cd DTLN && python export_dtln_to_onnx.py
+    4. Copy DTLN_model_1.onnx, DTLN_model_2.onnx to MODEL_DIR/dtln/
 """
 
 import logging
+import shutil
 from pathlib import Path
 
 import numpy as np
-import torch
-import torch.nn as nn
 
 logger = logging.getLogger(__name__)
 
-_SR         = 16_000
-_N_FFT      = 512
-_HOP        = 160
-_WIN        = 512
-_HF_FILE    = "gtcrn_lite.pth"
+_SR          = 16_000
+_BLOCK_LEN   = 512    # 32 ms at 16 kHz
+_BLOCK_SHIFT = 256    # 50% overlap
 
+# HuggingFace repo that hosts the pre-exported DTLN ONNX models.
+_HF_REPO  = "breizhn/DTLN"
+_HF_FILES = ["DTLN_model_1.onnx", "DTLN_model_2.onnx"]
 
-# ---------------------------------------------------------------------------
-# Model architecture
-# ---------------------------------------------------------------------------
-
-class _TCNBlock(nn.Module):
-    """Gated dilated depthwise temporal conv block."""
-
-    def __init__(self, channels: int, dilation: int) -> None:
-        super().__init__()
-        self.dw = nn.Conv1d(
-            channels, channels * 2, kernel_size=3,
-            dilation=dilation, padding=dilation, groups=channels,
-        )
-        self.pw = nn.Conv1d(channels * 2, channels, kernel_size=1)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h = self.dw(x)
-        a, b = h.chunk(2, dim=1)
-        return self.pw(torch.tanh(a) * torch.sigmoid(b)) + x
-
-
-class _GTCRN(nn.Module):
-    """
-    GTCRN-lite.
-
-    Data flow:
-        (B, 2, T, 257)                         — real + imag STFT
-        → encoder  → (B, 64, T, 33)
-        → reshape  → (B, T, 2112)
-        → in_proj  → (B, T, 256)
-        → TCN      → (B, T, 256)
-        → GRU      → (B, T, 256)
-        → out_proj → (B, T, 2112)
-        → reshape  → (B, 64, T, 33)
-        → decoder  → (B, 2, T, 257)            — complex ratio mask
-    """
-
-    _ENC_CH  = [2, 16, 32, 64]
-    _HIDDEN  = 256
-    _DILS    = [1, 2, 4, 8, 16]
-    _ENC_F   = 33      # freq bins after 3× stride-2 conv on 257 bins
-
-    def __init__(self) -> None:
-        super().__init__()
-
-        # Encoder: 257→129→65→33 along freq axis
-        enc_layers: list[nn.Module] = []
-        for i in range(len(self._ENC_CH) - 1):
-            ic, oc = self._ENC_CH[i], self._ENC_CH[i + 1]
-            enc_layers += [
-                nn.Conv2d(ic, oc, (1, 3), stride=(1, 2), padding=(0, 1)),
-                nn.BatchNorm2d(oc),
-                nn.PReLU(),
-            ]
-        self.encoder = nn.Sequential(*enc_layers)
-
-        flat = self._ENC_CH[-1] * self._ENC_F   # 64 × 33 = 2112
-        self.in_proj  = nn.Linear(flat, self._HIDDEN)
-        self.tcn      = nn.Sequential(*[_TCNBlock(self._HIDDEN, d) for d in self._DILS])
-        self.gru      = nn.GRU(self._HIDDEN, self._HIDDEN, num_layers=2, batch_first=True)
-        self.out_proj = nn.Linear(self._HIDDEN, flat)
-
-        # Decoder: mirrors encoder (33→65→129→257)
-        dec_ch = list(reversed(self._ENC_CH))
-        dec_layers: list[nn.Module] = []
-        for i in range(len(dec_ch) - 1):
-            ic, oc = dec_ch[i], dec_ch[i + 1]
-            dec_layers.append(
-                nn.ConvTranspose2d(ic, oc, (1, 3), stride=(1, 2), padding=(0, 1))
-            )
-            if i < len(dec_ch) - 2:          # no BN/act after the last layer
-                dec_layers += [nn.BatchNorm2d(oc), nn.PReLU()]
-        self.decoder = nn.Sequential(*dec_layers)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        B, _, T, F = x.shape
-
-        h = self.encoder(x)                                     # (B, 64, T, 33)
-        h = h.permute(0, 2, 1, 3).reshape(B, T, -1)            # (B, T, 2112)
-        h = self.in_proj(h)                                     # (B, T, 256)
-
-        h = self.tcn(h.permute(0, 2, 1)).permute(0, 2, 1)      # TCN on (B, 256, T)
-        h, _ = self.gru(h)                                      # (B, T, 256)
-
-        h = self.out_proj(h)                                    # (B, T, 2112)
-        h = h.reshape(B, T, self._ENC_CH[-1], self._ENC_F)
-        h = h.permute(0, 2, 1, 3)                              # (B, 64, T, 33)
-
-        h = self.decoder(h)                                     # (B, 2, T, ~257)
-        return h[..., :F]                                       # exact freq trim
-
-
-# ---------------------------------------------------------------------------
-# Public wrapper
-# ---------------------------------------------------------------------------
 
 class NoiseSuppressor:
     """
-    Wraps GTCRN-lite for frame-level noise suppression.
+    DTLN ONNX noise suppressor.
 
     process() is synchronous and blocking — call via asyncio.to_thread.
     """
 
     def __init__(self, model_dir: str) -> None:
-        self._dir    = Path(model_dir) / "gtcrn"
-        self._model: _GTCRN | None = None
-        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self._window = torch.hann_window(_WIN)
+        self._dir = Path(model_dir) / "dtln"
+        self._dir.mkdir(parents=True, exist_ok=True)
 
-        weights_path = self._dir / _HF_FILE
-        if not weights_path.exists():
-            logger.info(
-                "GTCRN: no pretrained weights at %s — passthrough mode "
-                "(place gtcrn_lite.pth in that directory to enable noise suppression)",
-                weights_path,
+        self._sess1 = None
+        self._sess2 = None
+        self._in1:  list[str] = []
+        self._out1: list[str] = []
+        self._in2:  list[str] = []
+        self._out2: list[str] = []
+
+        p1 = self._dir / "DTLN_model_1.onnx"
+        p2 = self._dir / "DTLN_model_2.onnx"
+
+        if not p1.exists() or not p2.exists():
+            self._download_models(p1, p2)
+
+        if p1.exists() and p2.exists():
+            self._load_sessions(p1, p2)
+        else:
+            logger.warning(
+                "DTLN: ONNX model files not found at %s — running in passthrough mode. "
+                "See module docstring for manual setup instructions.",
+                self._dir,
             )
-            return
 
+    # ------------------------------------------------------------------
+    # Setup helpers
+
+    def _download_models(self, p1: Path, p2: Path) -> None:
+        """Try to fetch DTLN ONNX files from HuggingFace Hub."""
         try:
-            model = _GTCRN()
-            sd = torch.load(weights_path, map_location="cpu", weights_only=True)
-            model.load_state_dict(sd)
-            model.eval()
-            self._model = model.to(self._device)
-            logger.info("GTCRN: weights loaded from %s", weights_path)
+            from huggingface_hub import hf_hub_download
+            logger.info("DTLN: downloading models from HuggingFace (%s) ...", _HF_REPO)
+            for fname, dest in zip(_HF_FILES, (p1, p2)):
+                cached = hf_hub_download(repo_id=_HF_REPO, filename=fname)
+                shutil.copy(cached, dest)
+            logger.info("DTLN: models downloaded to %s", self._dir)
         except Exception as exc:
-            logger.warning("NoiseSuppressor init failed (%s) — passthrough mode", exc)
+            logger.warning(
+                "DTLN: auto-download failed (%s). "
+                "Place DTLN_model_1.onnx and DTLN_model_2.onnx in %s to enable noise suppression.",
+                exc,
+                self._dir,
+            )
+
+    def _load_sessions(self, p1: Path, p2: Path) -> None:
+        """Load both ONNX sessions and cache input/output names."""
+        try:
+            import onnxruntime as ort
+
+            opts = ort.SessionOptions()
+            opts.inter_op_num_threads = 1
+            opts.intra_op_num_threads = 2
+
+            self._sess1 = ort.InferenceSession(str(p1), opts, providers=["CPUExecutionProvider"])
+            self._sess2 = ort.InferenceSession(str(p2), opts, providers=["CPUExecutionProvider"])
+
+            # Read names dynamically — robust across different DTLN export versions
+            self._in1  = [i.name for i in self._sess1.get_inputs()]
+            self._out1 = [o.name for o in self._sess1.get_outputs()]
+            self._in2  = [i.name for i in self._sess2.get_inputs()]
+            self._out2 = [o.name for o in self._sess2.get_outputs()]
+
+            logger.info(
+                "DTLN: loaded (model_1 inputs=%s, model_2 inputs=%s)",
+                self._in1, self._in2,
+            )
+        except Exception as exc:
+            logger.warning("DTLN: failed to load ONNX sessions (%s) — passthrough mode", exc)
+            self._sess1 = None
+            self._sess2 = None
+
+    # ------------------------------------------------------------------
+    # Properties
 
     @property
     def available(self) -> bool:
-        return self._model is not None
+        return self._sess1 is not None and self._sess2 is not None
+
+    # ------------------------------------------------------------------
+    # Inference
 
     def process(self, pcm_bytes: bytes) -> bytes:
         """
         Denoise 16-bit LE PCM at 16 kHz mono.
         Returns the same format. Falls back to the input on any error.
         """
-        if self._model is None or len(pcm_bytes) < _N_FFT * 2:
+        if not self.available or len(pcm_bytes) < _BLOCK_LEN * 2:
             return pcm_bytes
 
         try:
@@ -170,30 +138,60 @@ class NoiseSuppressor:
                 np.frombuffer(pcm_bytes, dtype=np.int16)
                 .astype(np.float32) / 32768.0
             )
-            wave = torch.from_numpy(audio).unsqueeze(0)   # (1, N)
-            win  = self._window
-
-            stft = torch.stft(wave, _N_FFT, _HOP, _WIN, win, return_complex=True)
-            # stft: (1, 257, T)
-
-            # Stack real + imag → (1, 2, T, 257)
-            spec = torch.stack([stft.real, stft.imag], dim=1).permute(0, 1, 3, 2)
-
-            with torch.no_grad():
-                mask = self._model(spec.to(self._device)).cpu()
-
-            # Apply complex ratio mask
-            nr, ni = spec[:, 0], spec[:, 1]
-            mr, mi = mask[:, 0], mask[:, 1]
-            clean  = torch.complex(nr * mr - ni * mi, nr * mi + ni * mr)
-            clean  = clean.permute(0, 2, 1)                # (1, F, T)
-
-            out_wave = torch.istft(clean, _N_FFT, _HOP, _WIN, win, length=len(audio))
-            out_i16  = (
-                out_wave.squeeze(0).clamp(-1.0, 1.0).numpy() * 32767.0
-            ).astype(np.int16)
-            return out_i16.tobytes()
-
+            return self._run_dtln(audio)
         except Exception as exc:
-            logger.warning("GTCRN inference error (%s) — returning original audio", exc)
+            logger.warning("DTLN inference error (%s) — returning original audio", exc)
             return pcm_bytes
+
+    def _run_dtln(self, audio: np.ndarray) -> bytes:
+        n = len(audio)
+
+        # Pad so every input sample is covered by at least one complete block.
+        # We need the padded length to be: (num_blocks - 1) * shift + block_len
+        # where num_blocks * shift >= n  →  num_blocks = ceil(n / shift)
+        num_blocks = max(1, -(-n // _BLOCK_SHIFT))          # ceil division
+        padded_len = (num_blocks - 1) * _BLOCK_SHIFT + _BLOCK_LEN
+        audio_padded = np.pad(audio, (0, max(0, padded_len - n)))
+
+        # Initialise LSTM states (zero tensors matching each model's expected shape)
+        h1 = np.zeros(self._sess1.get_inputs()[1].shape, dtype=np.float32)
+        h2 = np.zeros(self._sess2.get_inputs()[1].shape, dtype=np.float32)
+
+        out_buffer = np.zeros(_BLOCK_LEN, dtype=np.float32)
+        output     = np.zeros(padded_len, dtype=np.float32)
+
+        for i in range(num_blocks):
+            start     = i * _BLOCK_SHIFT
+            in_block  = audio_padded[start : start + _BLOCK_LEN]
+
+            # ── Stage 1: frequency-domain masking ────────────────────────
+            spec  = np.fft.rfft(in_block)
+            mag   = np.abs(spec).reshape(1, 1, -1).astype(np.float32)
+            phase = np.angle(spec)
+
+            out1    = self._sess1.run(self._out1, {self._in1[0]: mag, self._in1[1]: h1})
+            mask1, h1 = out1[0], out1[1]
+
+            est_spec  = (mag * mask1).squeeze() * np.exp(1j * phase)
+            est_frame = np.fft.irfft(est_spec).reshape(1, 1, -1).astype(np.float32)
+
+            # ── Stage 2: time-domain masking ─────────────────────────────
+            out2      = self._sess2.run(self._out2, {self._in2[0]: est_frame, self._in2[1]: h2})
+            mask2, h2 = out2[0], out2[1]
+
+            out_block = (est_frame * mask2)[0, 0]   # (512,)
+
+            # ── 50% overlap-add synthesis ────────────────────────────────
+            out_buffer[:_BLOCK_SHIFT] += out_block[:_BLOCK_SHIFT]
+            output[start : start + _BLOCK_SHIFT] = out_buffer[:_BLOCK_SHIFT]
+            out_buffer[:-_BLOCK_SHIFT]  = out_buffer[_BLOCK_SHIFT:]
+            out_buffer[-_BLOCK_SHIFT:]  = 0.0
+            out_buffer += np.concatenate([
+                np.zeros(_BLOCK_SHIFT, dtype=np.float32),
+                out_block[_BLOCK_SHIFT:],
+            ])
+
+        # Trim to original length and convert back to 16-bit PCM
+        clean  = output[:n]
+        out_i16 = (np.clip(clean, -1.0, 1.0) * 32767.0).astype(np.int16)
+        return out_i16.tobytes()

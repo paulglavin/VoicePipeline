@@ -17,8 +17,9 @@ transformers>=4.45.0
 huggingface_hub>=0.24.0
 accelerate>=0.33.0        # required by transformers for model loading
 
-# Noise suppression (GTCRN)
-# Weights downloaded from HuggingFace on first run; stored in MODEL_DIR/gtcrn/
+# Noise suppression (DTLN ONNX)
+# Models downloaded from HuggingFace on first run; stored in MODEL_DIR/dtln/
+onnxruntime>=1.18.0
 
 # Voice activity detection
 silero-vad>=5.1
