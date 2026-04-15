@@ -17,7 +17,7 @@ WORKDIR /app
 # Requires CUDA 12.8+ on the host and nvidia-container-toolkit.
 # For CPU-only, replace the index URL with https://download.pytorch.org/whl/cpu
 COPY requirements.txt .
-RUN pip install --no-cache-dir \
+RUN pip install --no-cache-dir --timeout 300 \
     --index-url https://download.pytorch.org/whl/cu128 \
     "torch>=2.7.0" "torchaudio>=2.7.0"
 
