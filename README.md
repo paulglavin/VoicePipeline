@@ -9,49 +9,65 @@ Home Assistant sends audio via the Wyoming protocol to a local STT service that 
 ```
 HA Wyoming client
       ↓ TCP :10300
-DTLN ONNX — noise suppression
+DTLN ONNX — noise suppression (wet/dry blend, bypassable via DTLN_MIX=0)
       ↓
-SileroVAD ONNX — voice activity detection
+SileroVAD v5 ONNX — voice activity detection (gates everything downstream)
       ↓
-WeSpeaker ECAPA-TDNN ONNX — speaker identification
+WeSpeaker ECAPA-TDNN ONNX — speaker identification (192-dim cosine similarity)
       ↓
-Granite 4.0 1B Speech — speech-to-text
+Granite 4.0 1B Speech — speech-to-text (IBM, gated HuggingFace model)
       ↓
-SQLite — interaction log
+SQLite (WAL mode) — interaction log + speaker profiles
       ↓
 Management UI — :8000
 ```
 
 Every utterance is written to a local SQLite database. Low-confidence or unknown-speaker interactions are queued for manual review in the UI.
 
+### Model implementation notes
+
+- **DTLN** — ONNX Runtime, two-stage model, wet/dry blend controlled by `DTLN_MIX`
+- **SileroVAD** — uses the `silero-vad` pip package's bundled ONNX and its `OnnxWrapper` class for state management; no runtime download required
+- **WeSpeaker** — uses `wespeakerruntime` (ONNX backend); internally calls `torchaudio.load()` which is monkey-patched at startup to use `soundfile` to avoid a `torchcodec` dependency in torchaudio 2.7+
+- **Granite STT** — `transformers` / PyTorch backend; CUDA 12.8 build required for RTX 50-series (Blackwell); no viable ONNX migration path at time of writing
+
+---
+
 ## Requirements
 
 - Docker + Docker Compose
 - nvidia-container-toolkit (GPU used for Granite STT)
-- ~4 GB free disk space for the `model_cache` volume (weights downloaded on first run)
+- ~3 GB free disk space for the `./models` bind mount (weights downloaded/copied on first run)
 - Ports 8000 (UI/API) and 10300 (Wyoming) available on the host
+
+---
 
 ## Deployment
 
 ### First time
 
-Clone the repo and build the image manually — Portainer's built-in build step does not handle large builds reliably:
+Clone the repo and build the image:
 
 ```bash
 git clone <repo-url> VoicePipeline
 cd VoicePipeline
+cp .env.example .env          # or create .env manually — see HuggingFace token section
 docker compose build
+docker compose up -d
 ```
 
-Then deploy the stack via Portainer (or `docker compose up -d`).
+> **Portainer users**: use the manual `docker compose build` step above rather than Portainer's built-in build — large CUDA wheel downloads can time out in Portainer's build runner.
 
-First boot downloads model weights to the `model_cache` Docker volume:
-- DTLN ONNX (~1.6 MB, two files) — from GitHub
-- SileroVAD ONNX (~2 MB) — from HuggingFace (snakers4/silero-vad)
-- WeSpeaker ECAPA-TDNN (~50 MB) — from WeSpeaker CDN
-- Granite 4.0 1B Speech (~2 GB) — from HuggingFace (requires HF_TOKEN)
+First boot downloads and caches model weights to `./models` on the host:
 
-The healthcheck has a 180-second start window to account for the first-run downloads. Subsequent starts are fast.
+| Model | Size | Source |
+|-------|------|--------|
+| DTLN ONNX (×2) | ~1.6 MB | GitHub (downloaded by pipeline at startup) |
+| SileroVAD ONNX | ~2 MB | Copied from `silero-vad` pip package (no network required) |
+| WeSpeaker ECAPA-TDNN | ~50 MB | Downloaded by `wespeakerruntime` on first call |
+| Granite 4.0 1B Speech | ~2 GB | HuggingFace (requires `HF_TOKEN`) |
+
+The healthcheck has a 180-second start window to account for first-run downloads. Subsequent starts are fast because `./models` is a host bind mount that survives rebuilds and `docker compose down -v`.
 
 ### Subsequent deploys
 
@@ -61,8 +77,6 @@ docker compose build
 docker compose up -d
 ```
 
-Portainer can manage the running stack after the initial manual build.
-
 ### HuggingFace token
 
 `ibm-granite/granite-4.0-1b-speech` is a gated model. Create a `.env` file alongside `docker-compose.yml` before the first run:
@@ -71,6 +85,8 @@ Portainer can manage the running stack after the initial manual build.
 HF_TOKEN=hf_your_token_here
 ```
 
+---
+
 ## Home Assistant integration
 
 1. In HA: **Settings → Devices & Services → Add Integration → Wyoming Protocol**
@@ -78,6 +94,8 @@ HF_TOKEN=hf_your_token_here
 3. Port: `10300`
 
 HA will use this as a speech-to-text provider in your assist pipeline.
+
+---
 
 ## Enrolling speakers
 
@@ -89,7 +107,9 @@ There is no pre-seeded speaker data. The bootstrap workflow is:
 
 Once a speaker has enough high-confidence interactions (≥0.85), their reference clips rotate automatically and identification improves over time.
 
-> **After a container rebuild**: if the speaker ID model has been updated (check the release notes), existing reference clips are not compatible with the new embedding model. Clear the reference clips from the Enrolled Speakers tab and re-enrol.
+> **After a container rebuild**: if the speaker ID model has been updated, existing reference clips are not compatible with the new embedding space. Use **Clear clips** in the Enrolled Speakers tab and re-enrol.
+
+---
 
 ## Management UI
 
@@ -98,30 +118,35 @@ Open `http://<host>:8000` in a browser.
 | Tab | Purpose |
 |-----|---------|
 | **Pending** | Review unrecognised or low-confidence interactions. Confirm, reject, assign to a different speaker, or enrol a new one. |
-| **Enrolled Speakers** | Stats per speaker: interaction count, average confidence, reference clip count, last active. |
+| **Enrolled Speakers** | Stats per speaker: interaction count, average confidence, reference clip count, last active. Delete a speaker or clear their reference clips. |
 | **History** | Full interaction log, filterable by speaker and date range. |
 | **Settings** | Retention policy, speaker matching thresholds, and Home Assistant integration options. |
 
-## Environment variables
+---
 
-All have sensible defaults; override in `docker-compose.yml` as needed.
+## Environment variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DB_PATH` | `/data/speaker.db` | SQLite database path |
 | `AUDIO_DIR` | `/data/audio` | WAV clip storage |
 | `EMBEDDING_DIR` | `/data/embeddings` | Speaker embedding cache |
-| `MODEL_DIR` | `/models` | ML model weight cache |
+| `MODEL_DIR` | `/models` | ML model weight cache (bind-mounted to `./models`) |
 | `WYOMING_HOST` | `0.0.0.0` | Wyoming server bind address |
 | `WYOMING_PORT` | `10300` | Wyoming server port |
-| `DTLN_MIX` | `0.5` | Noise suppression wet/dry blend. `1.0` = full suppression, `0.0` = bypass. Lower values reduce artefacts on clean audio. |
+| `HF_TOKEN` | _(required)_ | HuggingFace token for gated Granite model |
+| `DTLN_MIX` | `0.5` | Noise suppression wet/dry blend. `1.0` = full suppression, `0.0` = bypass. Reduce if you hear artefacts (hiss/squelch) on clean audio. |
+
+---
 
 ## Data volumes
 
-| Volume | Contents |
-|--------|---------|
-| `./data` (bind mount) | Database, audio clips, embeddings — back this up |
-| `model_cache` (named) | Downloaded model weights — can be deleted and re-downloaded |
+| Mount | Contents |
+|-------|---------|
+| `./data` (bind mount) | Database, audio clips, embeddings — **back this up** |
+| `./models` (bind mount) | Downloaded model weights — can be deleted and re-downloaded; survives `docker compose down -v` |
+
+---
 
 ## Retention
 
@@ -133,8 +158,19 @@ Configured in the **Settings** tab or directly in the database:
 | `resolved_retention_days` | 3 | Audio files for resolved interactions deleted after N days. Metadata kept permanently. `-1` = keep forever. |
 | `reference_clips_per_speaker` | 5 | Maximum reference clips retained per speaker (oldest rotated out). |
 
+---
+
 ## Personality processing
 
 When enabled in Settings, the speaker's name is prefixed to the transcript sent to Home Assistant (e.g. `Paul: turn the lights off`). This allows an LLM conversation agent in HA to personalise its responses.
 
 **Leave this off** if HA is set to "Process locally" — the rules-based intent handler does not understand the prefix and commands will fail. Only enable it once you have an LLM conversation agent configured in HA.
+
+---
+
+## Known limitations and future work
+
+- **Granite STT is PyTorch/CUDA only** — no ONNX migration path available yet; this is the main reason `torch` remains a dependency
+- **No authentication** — relies on network boundary (home LAN only); not suitable for internet-exposed deployments
+- **Speaker matching threshold is a blunt instrument** — a single global threshold (default 0.50) applies to all speakers; per-speaker thresholds would improve accuracy for household members with similar voice characteristics
+- **torchaudio 2.7 torchcodec workaround** — `wespeakerruntime` calls `torchaudio.load()` internally; torchaudio 2.7 routes this through `torchcodec` by default, which is unreliable in CUDA builds; the pipeline monkey-patches `torchaudio.load` with a `soundfile` implementation at startup
