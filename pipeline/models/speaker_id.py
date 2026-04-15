@@ -55,10 +55,11 @@ def _patch_torchaudio_load() -> None:
         def _load(uri, frame_offset: int = 0, num_frames: int = -1,
                   normalize: bool = True, channels_first: bool = True,
                   format=None, backend=None):
+            # soundfile uses frames=-1 to mean "read all", same as torchaudio
             data, sr = _sf.read(
                 str(uri), dtype="float32", always_2d=True,
                 start=frame_offset,
-                frames=None if num_frames == -1 else num_frames,
+                frames=num_frames,
             )
             tensor = torch.from_numpy(data.T if channels_first else data)
             return tensor, sr

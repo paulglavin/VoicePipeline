@@ -42,10 +42,12 @@ class VoiceActivityDetector:
     """
 
     def __init__(self, model_dir: str) -> None:
-        self._sess       = None
-        self._in_names   = []
-        self._has_sr_inp = False
-        model_path       = Path(model_dir) / "silero_vad" / "silero_vad.onnx"
+        self._sess        = None
+        self._in_names    = []
+        self._has_sr_inp  = False
+        self._uses_state  = False
+        self._state_shape: tuple = ()
+        model_path        = Path(model_dir) / "silero_vad" / "silero_vad.onnx"
 
         try:
             # Remove stale files from previous download attempts
@@ -78,9 +80,18 @@ class VoiceActivityDetector:
             )
             self._in_names   = [inp.name for inp in self._sess.get_inputs()]
             self._has_sr_inp = "sr" in self._in_names
-            logger.info(
-                "SileroVAD ONNX loaded — inputs: %s", self._in_names
-            )
+            self._uses_state = "state" in self._in_names
+            if self._uses_state:
+                # silero-vad v5: combined h+c state, shape (2, batch=1, hidden=128)
+                self._state_shape = (2, 1, 128)
+                state_inp = next(i for i in self._sess.get_inputs() if i.name == "state")
+                logger.info(
+                    "SileroVAD ONNX loaded — inputs: %s  state shape (model metadata): %s",
+                    self._in_names, state_inp.shape,
+                )
+            else:
+                self._state_shape = ()
+                logger.info("SileroVAD ONNX loaded — inputs: %s", self._in_names)
         except Exception as exc:
             logger.warning(
                 "VoiceActivityDetector init failed (%s) — passthrough mode", exc
@@ -117,18 +128,27 @@ class VoiceActivityDetector:
                     [audio, np.zeros(_CHUNK - remainder, dtype=np.float32)]
                 )
 
-            # Stateful LSTM: h and c carry context between chunks
-            h = np.zeros((2, 1, 64), dtype=np.float32)
-            c = np.zeros((2, 1, 64), dtype=np.float32)
+            # Stateful LSTM — v5 uses a single combined state tensor; older
+            # models use separate h and c tensors.
+            if self._uses_state:
+                state: np.ndarray | None = np.zeros(self._state_shape, dtype=np.float32)
+                h = c = None
+            else:
+                h     = np.zeros((2, 1, 64), dtype=np.float32)
+                c     = np.zeros((2, 1, 64), dtype=np.float32)
+                state = None
 
             probs: list[float] = []
 
             for i in range(0, len(audio), _CHUNK):
                 chunk = audio[i : i + _CHUNK].reshape(1, -1)
-                inp   = self._make_inputs(chunk, h, c)
+                inp   = self._make_inputs(chunk, h, c, state)
                 outs  = self._sess.run(None, inp)
                 probs.append(float(outs[0].flat[0]))
-                h, c = outs[1], outs[2]
+                if self._uses_state:
+                    state = outs[1]
+                else:
+                    h, c = outs[1], outs[2]
 
             # Collect speech segments from per-chunk probabilities
             segments = _find_segments(
@@ -165,13 +185,20 @@ class VoiceActivityDetector:
     def _make_inputs(
         self,
         chunk: np.ndarray,
-        h: np.ndarray,
-        c: np.ndarray,
+        h: np.ndarray | None,
+        c: np.ndarray | None,
+        state: np.ndarray | None = None,
     ) -> dict:
-        """Build the ONNX input dict, handling models with and without sr."""
+        """Build the ONNX input dict for both v4 (h/c) and v5 (state) models."""
         names = self._in_names
-        if self._has_sr_inp:
-            return {names[0]: chunk, "sr": np.array(_SR, dtype=np.int64), "h": h, "c": c}
+        sr    = np.array(_SR, dtype=np.int64)
+        if self._uses_state:
+            d: dict = {names[0]: chunk, "state": state}
+            if self._has_sr_inp:
+                d["sr"] = sr
+            return d
+        elif self._has_sr_inp:
+            return {names[0]: chunk, "sr": sr, "h": h, "c": c}
         else:
             return {names[0]: chunk, names[1]: h, names[2]: c}
 
