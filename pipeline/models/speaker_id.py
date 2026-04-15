@@ -37,6 +37,40 @@ _MATCH_THRESH_DEFAULT = 0.50   # fallback if settings row is missing
 _CACHE_TTL    = 300    # seconds between speaker cache refreshes
 
 
+def _patch_torchaudio_load() -> None:
+    """
+    Replace torchaudio.load with a soundfile implementation.
+
+    torchaudio 2.7 routes audio loading through torchcodec by default.
+    wespeakerruntime calls torchaudio.load() internally; this patch ensures
+    it uses soundfile (already a project dependency) regardless of whether
+    torchcodec is installed or which backend torchaudio selects.
+    """
+    try:
+        import torch
+        import torchaudio
+
+        import soundfile as _sf
+
+        def _load(uri, frame_offset: int = 0, num_frames: int = -1,
+                  normalize: bool = True, channels_first: bool = True,
+                  format=None, backend=None):
+            data, sr = _sf.read(
+                str(uri), dtype="float32", always_2d=True,
+                start=frame_offset,
+                frames=None if num_frames == -1 else num_frames,
+            )
+            tensor = torch.from_numpy(data.T if channels_first else data)
+            return tensor, sr
+
+        torchaudio.load = _load
+        logger.debug("torchaudio.load patched to use soundfile backend")
+    except Exception as exc:
+        logger.debug("torchaudio patch skipped: %s", exc)
+_MATCH_THRESH_DEFAULT = 0.50   # fallback if settings row is missing
+_CACHE_TTL    = 300    # seconds between speaker cache refreshes
+
+
 class SpeakerIdentifier:
     """
     WeSpeaker ECAPA-TDNN512 speaker identification.
@@ -52,6 +86,12 @@ class SpeakerIdentifier:
         self._lock     = threading.Lock()
 
         try:
+            # torchaudio 2.7 routes audio loading through torchcodec by default,
+            # but torchcodec is not guaranteed to be available in all CUDA builds.
+            # wespeakerruntime calls torchaudio.load() internally, so we replace it
+            # with a soundfile implementation before the import happens.
+            _patch_torchaudio_load()
+
             import wespeakerruntime as wespeaker
 
             # Store the downloaded model inside MODEL_DIR so it is persisted

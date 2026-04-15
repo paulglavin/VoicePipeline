@@ -78,14 +78,10 @@ class VoiceActivityDetector:
             self._has_sr_inp = "sr" in self._in_names
             self._uses_state = "state" in self._in_names  # v4+ combined h+c tensor
             if self._uses_state:
-                # Determine state shape from model metadata; default (2, 1, 128)
-                state_meta = next(
-                    i for i in self._sess.get_inputs() if i.name == "state"
-                )
-                self._state_shape = tuple(
-                    d if isinstance(d, int) and d > 0 else 1
-                    for d in state_meta.shape
-                )
+                # silero-vad v5 state: (batch=1, seq=1, hidden=128).
+                # Dynamic shape inference from ONNX metadata is unreliable for
+                # quantized exports — the model consistently expects (1, *, 128).
+                self._state_shape = (1, 1, 128)
             logger.info(
                 "SileroVAD ONNX loaded — inputs: %s", self._in_names
             )
