@@ -14,6 +14,7 @@ import logging
 from pathlib import Path
 
 import numpy as np
+import torch
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +113,7 @@ class VoiceActivityDetector:
             probs: list[float] = []
 
             for i in range(0, len(audio), _CHUNK):
-                chunk = audio[i : i + _CHUNK][np.newaxis, :]   # (1, chunk)
+                chunk = torch.from_numpy(audio[i : i + _CHUNK]).unsqueeze(0)  # (1, chunk)
                 prob  = self._model(chunk, sr=_SR)
                 probs.append(float(prob))
 
