@@ -1,28 +1,39 @@
 """
-vad.py — SileroVAD wrapper.
+vad.py — SileroVAD ONNX wrapper.
 
-Uses the silero-vad PyPI package (v5+).
-Weights are cached in MODEL_DIR/silero_vad/ via torch.hub.
+Uses the SileroVAD ONNX model downloaded from GitHub on first run.
+Pure onnxruntime inference — no torch dependency.
+
+Model: silero_vad.onnx (~1.8 MB)
+Source: https://github.com/snakers4/silero-vad
 
 process() is synchronous and blocking — call via asyncio.to_thread.
 """
 
 import logging
+import urllib.request
 from pathlib import Path
 
 import numpy as np
+import onnxruntime as ort
 
 logger = logging.getLogger(__name__)
 
-_SR             = 16_000
-_THRESHOLD      = 0.5    # speech probability to count as speech
-_MIN_SPEECH_MS  = 250    # discard segments shorter than this
-_PADDING_MS     = 100    # silence kept before/after each speech segment
+_SR            = 16_000
+_THRESHOLD     = 0.5     # speech probability to count as speech
+_MIN_SPEECH_MS = 250     # discard segments shorter than this
+_PADDING_MS    = 100     # silence kept before/after each speech segment
+_CHUNK         = 1536    # samples per inference step (96 ms at 16 kHz)
+
+_MODEL_URL = (
+    "https://github.com/snakers4/silero-vad"
+    "/raw/master/files/silero_vad.onnx"
+)
 
 
 class VoiceActivityDetector:
     """
-    Detects speech segments in a PCM buffer.
+    Detects speech segments in a PCM buffer using SileroVAD ONNX.
 
     Returns (speech_bytes, confidence) where:
     - speech_bytes  — concatenated speech segments (16-bit LE PCM, 16 kHz mono)
@@ -33,24 +44,35 @@ class VoiceActivityDetector:
     """
 
     def __init__(self, model_dir: str) -> None:
-        self._model    = None
-        self._get_ts   = None
-        self._hub_dir  = Path(model_dir) / "silero_vad"
+        self._sess       = None
+        self._in_names   = []
+        self._has_sr_inp = False
+        model_path       = Path(model_dir) / "silero_vad" / "silero_vad.onnx"
 
         try:
-            import torch
-            torch.hub.set_dir(str(self._hub_dir))
-            from silero_vad import load_silero_vad, get_speech_timestamps
+            if not model_path.exists():
+                model_path.parent.mkdir(parents=True, exist_ok=True)
+                logger.info("Downloading SileroVAD ONNX from GitHub …")
+                urllib.request.urlretrieve(_MODEL_URL, model_path)
+                logger.info("SileroVAD ONNX saved to %s", model_path)
 
-            self._model  = load_silero_vad().to("cpu")
-            self._get_ts = get_speech_timestamps
-            logger.info("SileroVAD loaded on cpu (hub cache: %s)", self._hub_dir)
+            self._sess = ort.InferenceSession(
+                str(model_path),
+                providers=["CPUExecutionProvider"],
+            )
+            self._in_names   = [inp.name for inp in self._sess.get_inputs()]
+            self._has_sr_inp = "sr" in self._in_names
+            logger.info(
+                "SileroVAD ONNX loaded — inputs: %s", self._in_names
+            )
         except Exception as exc:
-            logger.warning("VoiceActivityDetector init failed (%s) — passthrough mode", exc)
+            logger.warning(
+                "VoiceActivityDetector init failed (%s) — passthrough mode", exc
+            )
 
     @property
     def available(self) -> bool:
-        return self._model is not None
+        return self._sess is not None
 
     # ------------------------------------------------------------------
 
@@ -62,51 +84,133 @@ class VoiceActivityDetector:
         if not pcm_bytes:
             return b"", 0.0
 
-        if self._model is None:
-            # Passthrough — treat entire clip as speech
+        if self._sess is None:
             return pcm_bytes, 1.0
 
         try:
-            import torch
-
             audio = (
                 np.frombuffer(pcm_bytes, dtype=np.int16)
                 .astype(np.float32) / 32768.0
             )
-            tensor = torch.from_numpy(audio).to("cpu")
+            n = len(audio)
 
-            timestamps = self._get_ts(
-                tensor,
-                self._model,
-                threshold=_THRESHOLD,
-                sampling_rate=_SR,
-                min_speech_duration_ms=_MIN_SPEECH_MS,
-                min_silence_duration_ms=_PADDING_MS,
-                return_seconds=False,
+            # Pad to a multiple of _CHUNK so every chunk is full-length
+            remainder = n % _CHUNK
+            if remainder:
+                audio = np.concatenate(
+                    [audio, np.zeros(_CHUNK - remainder, dtype=np.float32)]
+                )
+
+            # Stateful LSTM: h and c carry context between chunks
+            h = np.zeros((2, 1, 64), dtype=np.float32)
+            c = np.zeros((2, 1, 64), dtype=np.float32)
+
+            probs: list[float] = []
+
+            for i in range(0, len(audio), _CHUNK):
+                chunk = audio[i : i + _CHUNK].reshape(1, -1)
+                inp   = self._make_inputs(chunk, h, c)
+                outs  = self._sess.run(None, inp)
+                probs.append(float(outs[0][0, 0]))
+                h, c = outs[1], outs[2]
+
+            # Collect speech segments from per-chunk probabilities
+            segments = _find_segments(
+                probs, _CHUNK, n, _THRESHOLD,
+                _MIN_SPEECH_MS, _PADDING_MS, _SR,
             )
 
-            if not timestamps:
+            if not segments:
                 logger.debug("VAD: no speech detected")
                 return b"", 0.0
 
-            pad_samples = int(_PADDING_MS / 1000.0 * _SR)
-            n           = len(audio)
-            segments: list[np.ndarray] = []
+            # Trim audio back to original length before slicing
+            audio = audio[:n]
+
+            parts: list[np.ndarray] = []
             speech_samples = 0
+            for start, end in segments:
+                parts.append(audio[start:end])
+                speech_samples += end - start
 
-            for seg in timestamps:
-                start = max(0, seg["start"] - pad_samples)
-                end   = min(n, seg["end"]   + pad_samples)
-                segments.append(audio[start:end])
-                speech_samples += seg["end"] - seg["start"]
+            speech   = np.concatenate(parts)
+            conf     = min(float(speech_samples) / max(n, 1), 1.0)
+            out_i16  = (speech * 32767.0).clip(-32768, 32767).astype(np.int16)
 
-            speech  = np.concatenate(segments)
-            conf    = min(float(speech_samples) / max(n, 1), 1.0)
-            out_i16 = (speech * 32767.0).clip(-32768, 32767).astype(np.int16)
-
-            logger.debug("VAD: %d segments, confidence=%.2f", len(timestamps), conf)
+            logger.debug("VAD: %d segment(s), confidence=%.2f", len(segments), conf)
             return out_i16.tobytes(), conf
 
         except Exception as exc:
             logger.warning("VAD error (%s) — passthrough", exc)
             return pcm_bytes, 0.5
+
+    # ------------------------------------------------------------------
+
+    def _make_inputs(
+        self,
+        chunk: np.ndarray,
+        h: np.ndarray,
+        c: np.ndarray,
+    ) -> dict:
+        """Build the ONNX input dict, handling models with and without sr."""
+        names = self._in_names
+        if self._has_sr_inp:
+            # [audio, sr, h, c]  — sr is a scalar int64
+            return {
+                names[0]: chunk,
+                "sr":      np.array(_SR, dtype=np.int64),
+                "h":       h,
+                "c":       c,
+            }
+        else:
+            # [audio, h, c]  — sample rate baked in
+            return {names[0]: chunk, names[1]: h, names[2]: c}
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+
+
+def _find_segments(
+    probs: list[float],
+    chunk_size: int,
+    n_original: int,
+    threshold: float,
+    min_speech_ms: int,
+    padding_ms: int,
+    sr: int,
+) -> list[tuple[int, int]]:
+    """
+    Convert per-chunk speech probabilities to (start, end) sample pairs.
+
+    Applies minimum speech duration and padding, and clamps to [0, n_original].
+    """
+    min_samples = int(min_speech_ms / 1000.0 * sr)
+    pad_samples = int(padding_ms    / 1000.0 * sr)
+
+    segments: list[tuple[int, int]] = []
+    in_speech = False
+    seg_start = 0
+
+    for i, prob in enumerate(probs):
+        sample = i * chunk_size
+        if prob >= threshold and not in_speech:
+            in_speech = True
+            seg_start = sample
+        elif prob < threshold and in_speech:
+            seg_end = sample
+            if seg_end - seg_start >= min_samples:
+                start = max(0, seg_start - pad_samples)
+                end   = min(n_original, seg_end + pad_samples)
+                segments.append((start, end))
+            in_speech = False
+
+    # Trailing speech that never dips below threshold
+    if in_speech:
+        seg_end = len(probs) * chunk_size
+        if seg_end - seg_start >= min_samples:
+            start = max(0, seg_start - pad_samples)
+            end   = min(n_original, seg_end + pad_samples)
+            segments.append((start, end))
+
+    return segments

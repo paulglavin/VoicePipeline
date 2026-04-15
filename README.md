@@ -9,11 +9,11 @@ Home Assistant sends audio via the Wyoming protocol to a local STT service that 
 ```
 HA Wyoming client
       ↓ TCP :10300
-GTCRN — noise suppression
+DTLN ONNX — noise suppression
       ↓
-SileroVAD — voice activity detection
+SileroVAD ONNX — voice activity detection
       ↓
-ECAPA-TDNN — speaker identification
+WeSpeaker ECAPA-TDNN ONNX — speaker identification
       ↓
 Granite 4.0 1B Speech — speech-to-text
       ↓
@@ -27,7 +27,8 @@ Every utterance is written to a local SQLite database. Low-confidence or unknown
 ## Requirements
 
 - Docker + Docker Compose
-- ~5 GB free disk space (model weights downloaded on first run)
+- nvidia-container-toolkit (GPU used for Granite STT)
+- ~4 GB free disk space for the `model_cache` volume (weights downloaded on first run)
 - Ports 8000 (UI/API) and 10300 (Wyoming) available on the host
 
 ## Deployment
@@ -44,7 +45,13 @@ docker compose build
 
 Then deploy the stack via Portainer (or `docker compose up -d`).
 
-First boot downloads ~3–4 GB of model weights to the `model_cache` Docker volume. The healthcheck has a 180-second start window to account for this. Subsequent starts are fast.
+First boot downloads model weights to the `model_cache` Docker volume:
+- DTLN ONNX (~1.6 MB, two files) — from GitHub
+- SileroVAD ONNX (~1.8 MB) — from GitHub
+- WeSpeaker ECAPA-TDNN (~50 MB) — from WeSpeaker CDN
+- Granite 4.0 1B Speech (~2 GB) — from HuggingFace (requires HF_TOKEN)
+
+The healthcheck has a 180-second start window to account for the first-run downloads. Subsequent starts are fast.
 
 ### Subsequent deploys
 
@@ -58,11 +65,10 @@ Portainer can manage the running stack after the initial manual build.
 
 ### HuggingFace token
 
-If `ibm-granite/granite-speech-4.0-1b` is a gated model, uncomment and set the token in `docker-compose.yml` before building:
+`ibm-granite/granite-4.0-1b-speech` is a gated model. Create a `.env` file alongside `docker-compose.yml` before the first run:
 
-```yaml
-environment:
-  HUGGING_FACE_HUB_TOKEN: hf_your_token_here
+```
+HF_TOKEN=hf_your_token_here
 ```
 
 ## Home Assistant integration
@@ -83,6 +89,8 @@ There is no pre-seeded speaker data. The bootstrap workflow is:
 
 Once a speaker has enough high-confidence interactions (≥0.85), their reference clips rotate automatically and identification improves over time.
 
+> **After a container rebuild**: if the speaker ID model has been updated (check the release notes), existing reference clips are not compatible with the new embedding model. Clear the reference clips from the Enrolled Speakers tab and re-enrol.
+
 ## Management UI
 
 Open `http://<host>:8000` in a browser.
@@ -92,7 +100,7 @@ Open `http://<host>:8000` in a browser.
 | **Pending** | Review unrecognised or low-confidence interactions. Confirm, reject, assign to a different speaker, or enrol a new one. |
 | **Enrolled Speakers** | Stats per speaker: interaction count, average confidence, reference clip count, last active. |
 | **History** | Full interaction log, filterable by speaker and date range. |
-| **Settings** | Retention policy for pending and resolved interactions. |
+| **Settings** | Retention policy, speaker matching thresholds, and Home Assistant integration options. |
 
 ## Environment variables
 
@@ -106,6 +114,7 @@ All have sensible defaults; override in `docker-compose.yml` as needed.
 | `MODEL_DIR` | `/models` | ML model weight cache |
 | `WYOMING_HOST` | `0.0.0.0` | Wyoming server bind address |
 | `WYOMING_PORT` | `10300` | Wyoming server port |
+| `DTLN_MIX` | `0.5` | Noise suppression wet/dry blend. `1.0` = full suppression, `0.0` = bypass. Lower values reduce artefacts on clean audio. |
 
 ## Data volumes
 
@@ -123,3 +132,9 @@ Configured in the **Settings** tab or directly in the database:
 | `pending_retention_days` | 7 | Unresolved interactions purged after N days. `0` = never. |
 | `resolved_retention_days` | 3 | Audio files for resolved interactions deleted after N days. Metadata kept permanently. `-1` = keep forever. |
 | `reference_clips_per_speaker` | 5 | Maximum reference clips retained per speaker (oldest rotated out). |
+
+## Personality processing
+
+When enabled in Settings, the speaker's name is prefixed to the transcript sent to Home Assistant (e.g. `Paul: turn the lights off`). This allows an LLM conversation agent in HA to personalise its responses.
+
+**Leave this off** if HA is set to "Process locally" — the rules-based intent handler does not understand the prefix and commands will fail. Only enable it once you have an LLM conversation agent configured in HA.

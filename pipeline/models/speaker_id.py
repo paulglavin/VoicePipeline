@@ -1,61 +1,86 @@
 """
 speaker_id.py — Speaker identification wrapper.
 
-Uses SpeechBrain's ECAPA-TDNN model (speechbrain/spkrec-ecapa-voxceleb),
-which provides equivalent quality to ERes2Net for speaker verification.
-Model is downloaded from HuggingFace on first run and cached in
-MODEL_DIR/speechbrain/.
+Uses WeSpeaker ECAPA-TDNN512 via the wespeakerruntime package (ONNX backend).
+No torch or SpeechBrain dependency — inference is pure onnxruntime.
+
+Model downloaded on first use by wespeakerruntime; cached at the path
+supplied by MODEL_DIR so it persists across container restarts.
 
 identify() compares the input audio's embedding against the mean embeddings
 of enrolled speakers (built from their reference_clips). The cache refreshes
 every CACHE_TTL seconds or when explicitly called.
 
 All public methods are synchronous and blocking — call via asyncio.to_thread.
+
+NOTE: wespeakerruntime uses a different embedding model from the previous
+SpeechBrain ECAPA-TDNN. Embeddings are not cross-compatible — any enrolled
+speakers must be re-enrolled after this migration.
 """
 
 import json
 import logging
+import os
 import sqlite3
+import tempfile
 import threading
 import time
 from pathlib import Path
 
 import numpy as np
+import soundfile as sf
 
 logger = logging.getLogger(__name__)
 
 _SR           = 16_000
 _MATCH_THRESH_DEFAULT = 0.50   # fallback if settings row is missing
 _CACHE_TTL    = 300    # seconds between speaker cache refreshes
-_HF_MODEL     = "speechbrain/spkrec-ecapa-voxceleb"
 
 
 class SpeakerIdentifier:
     """
-    ECAPA-TDNN speaker identification.
+    WeSpeaker ECAPA-TDNN512 speaker identification.
 
     identify() returns (speaker_name | None, cosine_similarity | None, embedding | None).
     """
 
     def __init__(self, model_dir: str, db_path: str) -> None:
         self._db_path  = db_path
-        self._model    = None
-        self._device   = "cpu"
+        self._speaker  = None
         self._cache:   dict[str, np.ndarray] = {}
         self._cache_t  = 0.0
         self._lock     = threading.Lock()
-        self._save_dir = str(Path(model_dir) / "speechbrain")
 
         try:
-            import torch
-            from speechbrain.inference.speaker import EncoderClassifier
-            self._device = "cuda" if torch.cuda.is_available() else "cpu"
-            self._model = EncoderClassifier.from_hparams(
-                source=_HF_MODEL,
-                savedir=self._save_dir,
-                run_opts={"device": self._device},
-            )
-            logger.info("SpeechBrain ECAPA-TDNN loaded on %s from %s", self._device, _HF_MODEL)
+            import wespeakerruntime as wespeaker
+
+            # Store the downloaded model inside MODEL_DIR so it is persisted
+            # on the /models volume and not re-downloaded on every rebuild.
+            model_dir_path = Path(model_dir) / "wespeaker"
+            model_dir_path.mkdir(parents=True, exist_ok=True)
+
+            # wespeakerruntime downloads its model on the first call if the
+            # onnx_path does not yet exist; subsequent starts load from disk.
+            onnx_path = model_dir_path / "voxceleb_resnet34_LM.onnx"
+            if onnx_path.exists():
+                self._speaker = wespeaker.Speaker(
+                    lang="en", onnx_path=str(onnx_path)
+                )
+            else:
+                # First run — let the library download, then copy to MODEL_DIR
+                logger.info(
+                    "WeSpeaker: model not cached, downloading (English / VoxCeleb) …"
+                )
+                tmp = wespeaker.Speaker(lang="en")
+                # Locate the file wespeakerruntime just downloaded
+                src = _find_wespeaker_onnx(tmp)
+                if src and Path(src).exists():
+                    import shutil
+                    shutil.copy2(src, onnx_path)
+                    logger.info("WeSpeaker model cached at %s", onnx_path)
+                self._speaker = tmp
+
+            logger.info("WeSpeaker ECAPA-TDNN loaded (ONNX / CPU)")
         except Exception as exc:
             logger.warning(
                 "SpeakerIdentifier init failed (%s) — unknown-speaker mode", exc
@@ -63,7 +88,7 @@ class SpeakerIdentifier:
 
     @property
     def available(self) -> bool:
-        return self._model is not None
+        return self._speaker is not None
 
     # ------------------------------------------------------------------
     # Speaker embedding cache
@@ -120,29 +145,10 @@ class SpeakerIdentifier:
             logger.debug("Reference clip missing (retention purged?): %s", path)
             return None
         try:
-            import wave
-            import torch
-
-            with wave.open(path, "rb") as wf:
-                raw = wf.readframes(wf.getnframes())
-                sr  = wf.getframerate()
-
-            audio = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-
-            if sr != _SR:
-                # Simple resample via torch if rate differs
-                signal = torch.from_numpy(audio).unsqueeze(0)
-                import torchaudio
-                signal = torchaudio.functional.resample(signal, sr, _SR)
-            else:
-                signal = torch.from_numpy(audio).unsqueeze(0)  # (1, N)
-
-            signal = signal.to(self._device)
-            with torch.no_grad():
-                emb = self._model.encode_batch(signal)   # (1, 1, dim)
-
-            arr = emb.squeeze().cpu().numpy().astype(np.float32)
-            return _l2(arr)
+            emb = self._speaker.extract_embedding(path)
+            if emb is None:
+                return None
+            return _l2(np.asarray(emb, dtype=np.float32).flatten())
         except Exception as exc:
             logger.warning("Embedding failed for %s: %s", path, exc)
             return None
@@ -152,23 +158,29 @@ class SpeakerIdentifier:
         Extract a normalised speaker embedding from raw 16-bit LE PCM at 16 kHz.
         Returns None if the model is unavailable or the audio is too short.
         """
-        if self._model is None or len(pcm_bytes) < _SR * 2 * 0.2:   # < 200 ms
+        if self._speaker is None or len(pcm_bytes) < _SR * 2 * 0.2:   # < 200 ms
             return None
 
         try:
-            import torch
-
             audio = (
                 np.frombuffer(pcm_bytes, dtype=np.int16)
                 .astype(np.float32) / 32768.0
             )
-            tensor = torch.from_numpy(audio).unsqueeze(0).to(self._device)   # (1, N)
+            # wespeakerruntime expects a file path — write to a temp WAV
+            fd, tmp_path = tempfile.mkstemp(suffix=".wav")
+            os.close(fd)
+            try:
+                sf.write(tmp_path, audio, _SR, subtype="PCM_16")
+                emb = self._speaker.extract_embedding(tmp_path)
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
-            with torch.no_grad():
-                emb = self._model.encode_batch(tensor)      # (1, 1, dim)
-
-            arr = emb.squeeze().cpu().numpy().astype(np.float32)
-            return _l2(arr)
+            if emb is None:
+                return None
+            return _l2(np.asarray(emb, dtype=np.float32).flatten())
 
         except Exception as exc:
             logger.warning("extract_embedding error: %s", exc)
@@ -224,7 +236,29 @@ class SpeakerIdentifier:
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+
 
 def _l2(v: np.ndarray) -> np.ndarray:
     norm = np.linalg.norm(v)
     return v / (norm + 1e-8)
+
+
+def _find_wespeaker_onnx(speaker_obj) -> str | None:
+    """
+    Try to locate the ONNX file that wespeakerruntime just downloaded.
+    Different versions store it in different places; we check a few.
+    Returns the path string or None if not found.
+    """
+    try:
+        # Some versions expose the path directly
+        if hasattr(speaker_obj, "onnx_path"):
+            return speaker_obj.onnx_path
+        if hasattr(speaker_obj, "model_path"):
+            return speaker_obj.model_path
+        # Inspect the ONNX session for its model path (onnxruntime >=1.14)
+        if hasattr(speaker_obj, "session") and hasattr(speaker_obj.session, "_model_path"):
+            return speaker_obj.session._model_path
+    except Exception:
+        pass
+    return None

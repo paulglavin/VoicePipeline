@@ -8,25 +8,22 @@ python-multipart==0.0.22
 wyoming>=1.5.3
 
 # PyTorch — CUDA 12.8 build installed in Dockerfile (RTX 50-series / Blackwell).
-# For CPU-only, swap the index URL in Dockerfile and downgrade to >=2.2.0.
+# Only required for STT (Granite 4.0 1B Speech via transformers).
+# VAD and speaker ID now use pure ONNX; torch can be removed once STT is migrated.
 torch>=2.7.0
-torchaudio>=2.7.0
 
-# ML model inference
+# STT — IBM Granite 4.0 1B Speech (transformers / torch backend)
+# TODO: migrate to onnx-community/granite-4.0-1b-speech-ONNX when available
 transformers>=4.45.0
 huggingface_hub>=0.24.0
 accelerate>=0.33.0        # required by transformers for model loading
 
-# Noise suppression (DTLN ONNX)
-# Models downloaded from HuggingFace on first run; stored in MODEL_DIR/dtln/
+# ONNX model inference (DTLN noise suppressor, SileroVAD, WeSpeaker speaker ID)
 onnxruntime>=1.18.0
 
-# Voice activity detection
-silero-vad>=5.1
+# Speaker identification (WeSpeaker ECAPA-TDNN — ONNX backend, no torch)
+wespeakerruntime>=0.0.4
 
-# Speaker identification (ECAPA-TDNN via SpeechBrain — equivalent quality to ERes2Net)
-speechbrain>=1.0.0
-
-# Audio I/O (reference clip loading, temp files for wespeaker)
+# Audio I/O (reference clip loading, temp files for speaker embedding)
 soundfile>=0.12.1
 numpy==2.2.1
