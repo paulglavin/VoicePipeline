@@ -19,7 +19,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir --timeout 300 \
     --index-url https://download.pytorch.org/whl/cu128 \
-    "torch>=2.7.0" "torchaudio>=2.7.0"
+    "torch>=2.7.0" "torchaudio>=2.7.0" "torchcodec>=0.2"
 
 # ── Step 2: install the remaining requirements ─────────────────────────
 RUN pip install --no-cache-dir -r requirements.txt

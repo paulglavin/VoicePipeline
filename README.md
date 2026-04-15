@@ -47,7 +47,7 @@ Then deploy the stack via Portainer (or `docker compose up -d`).
 
 First boot downloads model weights to the `model_cache` Docker volume:
 - DTLN ONNX (~1.6 MB, two files) — from GitHub
-- SileroVAD ONNX (~1.8 MB) — from GitHub
+- SileroVAD ONNX (~2 MB) — from HuggingFace (snakers4/silero-vad)
 - WeSpeaker ECAPA-TDNN (~50 MB) — from WeSpeaker CDN
 - Granite 4.0 1B Speech (~2 GB) — from HuggingFace (requires HF_TOKEN)
 

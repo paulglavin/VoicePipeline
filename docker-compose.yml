@@ -7,7 +7,7 @@ services:
       - "10300:10300"     # Wyoming STT — add this as a custom integration in HA
     volumes:
       - ./data:/data                  # runtime data (DB, audio clips, embeddings)
-      - model_cache:/models           # ML model weights (survives rebuilds)
+      - ./models:/models              # ML model weights (host bind mount — survives rebuilds and volume ops)
     environment:
       DB_PATH:           /data/speaker.db
       AUDIO_DIR:         /data/audio
@@ -37,5 +37,4 @@ services:
       retries: 5
       start_period: 180s    # first run downloads ~3–4 GB of model weights
 
-volumes:
-  model_cache:    # named volume — weights survive `docker compose down`
+volumes: {}  # model weights now in ./models bind mount; named volume no longer needed

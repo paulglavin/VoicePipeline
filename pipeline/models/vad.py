@@ -4,7 +4,8 @@ vad.py — SileroVAD ONNX wrapper.
 Uses the SileroVAD ONNX model downloaded from HuggingFace on first run.
 Pure onnxruntime inference — no torch dependency.
 
-Model: onnx-community/silero-vad  (onnx/model_q4f16.onnx, ~1.15 MB)
+Model: snakers4/silero-vad  (silero_vad.onnx, ~2 MB)
+Inputs: ['input', 'sr', 'h', 'c']  — standard h/c LSTM state interface.
 
 process() is synchronous and blocking — call via asyncio.to_thread.
 """
@@ -23,8 +24,8 @@ _MIN_SPEECH_MS = 250     # discard segments shorter than this
 _PADDING_MS    = 100     # silence kept before/after each speech segment
 _CHUNK         = 1536    # samples per inference step (96 ms at 16 kHz)
 
-_HF_REPO  = "onnx-community/silero-vad"
-_HF_FILE  = "onnx/model_q4f16.onnx"
+_HF_REPO  = "snakers4/silero-vad"
+_HF_FILE  = "silero_vad.onnx"
 
 
 class VoiceActivityDetector:
@@ -43,9 +44,17 @@ class VoiceActivityDetector:
         self._sess       = None
         self._in_names   = []
         self._has_sr_inp = False
-        model_path       = Path(model_dir) / "silero_vad" / "model_q4f16.onnx"
+        self._uses_state = False
+        self._state_shape: tuple = ()
+        model_path       = Path(model_dir) / "silero_vad" / "silero_vad.onnx"
 
         try:
+            # Delete stale onnx-community model if present from a prior build
+            stale = model_path.parent / "model_q4f16.onnx"
+            if stale.exists():
+                stale.unlink()
+                logger.info("Removed stale onnx-community VAD model")
+
             if not model_path.exists():
                 model_path.parent.mkdir(parents=True, exist_ok=True)
                 logger.info(
