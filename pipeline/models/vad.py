@@ -1,17 +1,15 @@
 """
 vad.py — SileroVAD ONNX wrapper.
 
-Uses the SileroVAD ONNX model downloaded from GitHub on first run.
+Uses the SileroVAD ONNX model downloaded from HuggingFace on first run.
 Pure onnxruntime inference — no torch dependency.
 
-Model: silero_vad.onnx (~1.8 MB)
-Source: https://github.com/snakers4/silero-vad
+Model: onnx-community/silero-vad  (onnx/model_q4f16.onnx, ~1.15 MB)
 
 process() is synchronous and blocking — call via asyncio.to_thread.
 """
 
 import logging
-import urllib.request
 from pathlib import Path
 
 import numpy as np
@@ -25,10 +23,8 @@ _MIN_SPEECH_MS = 250     # discard segments shorter than this
 _PADDING_MS    = 100     # silence kept before/after each speech segment
 _CHUNK         = 1536    # samples per inference step (96 ms at 16 kHz)
 
-_MODEL_URL = (
-    "https://github.com/snakers4/silero-vad"
-    "/raw/master/files/silero_vad.onnx"
-)
+_HF_REPO  = "onnx-community/silero-vad"
+_HF_FILE  = "onnx/model_q4f16.onnx"
 
 
 class VoiceActivityDetector:
@@ -47,13 +43,22 @@ class VoiceActivityDetector:
         self._sess       = None
         self._in_names   = []
         self._has_sr_inp = False
-        model_path       = Path(model_dir) / "silero_vad" / "silero_vad.onnx"
+        model_path       = Path(model_dir) / "silero_vad" / "model_q4f16.onnx"
 
         try:
             if not model_path.exists():
                 model_path.parent.mkdir(parents=True, exist_ok=True)
-                logger.info("Downloading SileroVAD ONNX from GitHub …")
-                urllib.request.urlretrieve(_MODEL_URL, model_path)
+                logger.info(
+                    "Downloading SileroVAD ONNX from HuggingFace (%s) …",
+                    _HF_REPO,
+                )
+                from huggingface_hub import hf_hub_download
+                tmp = hf_hub_download(
+                    repo_id=_HF_REPO,
+                    filename=_HF_FILE,
+                )
+                import shutil
+                shutil.copy2(tmp, model_path)
                 logger.info("SileroVAD ONNX saved to %s", model_path)
 
             self._sess = ort.InferenceSession(

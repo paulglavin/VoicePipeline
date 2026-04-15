@@ -9,15 +9,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# ── Step 1: install PyTorch (CUDA 12.8) for STT only ─────────────────
-# VAD and speaker ID now use pure ONNX (onnxruntime); only Granite STT
-# still requires torch.  torchaudio is no longer needed.
+# ── Step 1: install PyTorch + torchaudio (CUDA 12.8) ─────────────────
+# torch is required by Granite STT (transformers).
+# torchaudio must be installed here from the CUDA index — wespeakerruntime
+# lists it as a dependency and pip would otherwise install the CPU build
+# from PyPI, which is ABI-incompatible with the CUDA torch above.
 # Requires CUDA 12.8+ on the host and nvidia-container-toolkit.
 # For CPU-only, replace the index URL with https://download.pytorch.org/whl/cpu
 COPY requirements.txt .
 RUN pip install --no-cache-dir \
     --index-url https://download.pytorch.org/whl/cu128 \
-    "torch>=2.7.0"
+    "torch>=2.7.0" "torchaudio>=2.7.0"
 
 # ── Step 2: install the remaining requirements ─────────────────────────
 RUN pip install --no-cache-dir -r requirements.txt
