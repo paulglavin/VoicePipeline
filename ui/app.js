@@ -45,6 +45,7 @@ async function apiFetch(path, options = {}) {
     const body = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(body.detail || res.statusText);
   }
+  if (res.status === 204) return null;
   return res.json();
 }
 

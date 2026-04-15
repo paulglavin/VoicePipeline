@@ -67,6 +67,16 @@ class VoiceActivityDetector:
             )
             self._in_names   = [inp.name for inp in self._sess.get_inputs()]
             self._has_sr_inp = "sr" in self._in_names
+            self._uses_state = "state" in self._in_names  # v4+ combined h+c tensor
+            if self._uses_state:
+                # Determine state shape from model metadata; default (2, 1, 128)
+                state_meta = next(
+                    i for i in self._sess.get_inputs() if i.name == "state"
+                )
+                self._state_shape = tuple(
+                    d if isinstance(d, int) and d > 0 else 1
+                    for d in state_meta.shape
+                )
             logger.info(
                 "SileroVAD ONNX loaded — inputs: %s", self._in_names
             )
@@ -106,18 +116,30 @@ class VoiceActivityDetector:
                     [audio, np.zeros(_CHUNK - remainder, dtype=np.float32)]
                 )
 
-            # Stateful LSTM: h and c carry context between chunks
-            h = np.zeros((2, 1, 64), dtype=np.float32)
-            c = np.zeros((2, 1, 64), dtype=np.float32)
+            # Stateful LSTM: state carries context between chunks.
+            # Newer models (inputs: [input, state, sr]) use a single combined
+            # state tensor; older models use separate h and c tensors.
+            if self._uses_state:
+                state: np.ndarray | None = np.zeros(
+                    self._state_shape, dtype=np.float32
+                )
+                h = c = None
+            else:
+                h     = np.zeros((2, 1, 64), dtype=np.float32)
+                c     = np.zeros((2, 1, 64), dtype=np.float32)
+                state = None
 
             probs: list[float] = []
 
             for i in range(0, len(audio), _CHUNK):
                 chunk = audio[i : i + _CHUNK].reshape(1, -1)
-                inp   = self._make_inputs(chunk, h, c)
+                inp   = self._make_inputs(chunk, h, c, state)
                 outs  = self._sess.run(None, inp)
-                probs.append(float(outs[0][0, 0]))
-                h, c = outs[1], outs[2]
+                probs.append(float(outs[0].flat[0]))
+                if self._uses_state:
+                    state = outs[1]
+                else:
+                    h, c = outs[1], outs[2]
 
             # Collect speech segments from per-chunk probabilities
             segments = _find_segments(
@@ -154,21 +176,24 @@ class VoiceActivityDetector:
     def _make_inputs(
         self,
         chunk: np.ndarray,
-        h: np.ndarray,
-        c: np.ndarray,
+        h: np.ndarray | None,
+        c: np.ndarray | None,
+        state: np.ndarray | None = None,
     ) -> dict:
-        """Build the ONNX input dict, handling models with and without sr."""
+        """Build the ONNX input dict, handling v3 (h/c) and v4+ (state) models."""
         names = self._in_names
-        if self._has_sr_inp:
-            # [audio, sr, h, c]  — sr is a scalar int64
-            return {
-                names[0]: chunk,
-                "sr":      np.array(_SR, dtype=np.int64),
-                "h":       h,
-                "c":       c,
-            }
+        sr    = np.array(_SR, dtype=np.int64)
+        if self._uses_state:
+            # v4+: [input, state, sr]
+            d: dict = {names[0]: chunk, "state": state}
+            if self._has_sr_inp:
+                d["sr"] = sr
+            return d
+        elif self._has_sr_inp:
+            # v3: [input, sr, h, c]
+            return {names[0]: chunk, "sr": sr, "h": h, "c": c}
         else:
-            # [audio, h, c]  — sample rate baked in
+            # v3 without sr: [input, h, c]
             return {names[0]: chunk, names[1]: h, names[2]: c}
 
 

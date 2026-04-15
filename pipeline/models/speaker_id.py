@@ -52,6 +52,15 @@ class SpeakerIdentifier:
         self._lock     = threading.Lock()
 
         try:
+            # torchaudio 2.7 defaults to the torchcodec backend on some builds.
+            # wespeakerruntime calls torchaudio.load() internally; force soundfile
+            # so torchcodec (not installed) is never selected.
+            try:
+                import torchaudio
+                torchaudio.set_audio_backend("soundfile")
+            except Exception:
+                pass
+
             import wespeakerruntime as wespeaker
 
             # Store the downloaded model inside MODEL_DIR so it is persisted
