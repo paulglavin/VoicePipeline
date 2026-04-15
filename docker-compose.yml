@@ -19,6 +19,11 @@ services:
       # Set HF_TOKEN in a .env file alongside docker-compose.yml.
       HF_TOKEN: ${HF_TOKEN}
       DTLN_MIX: "0"         # 0 = bypass NS entirely for audio quality testing
+      # HA Personality Engine integration.
+      # Set HA_BASE_URL to your HA instance and flip HA_WEBHOOK_ENABLED to "true"
+      # once the personality_engine custom component is installed in HA.
+      HA_BASE_URL: ""           # e.g. http://homeassistant.local:8123
+      HA_WEBHOOK_ENABLED: "false"
     deploy:
       resources:
         reservations:

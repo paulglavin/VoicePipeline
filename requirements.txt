@@ -30,3 +30,6 @@ wespeakerruntime>=0.0.4
 # Audio I/O (reference clip loading, temp files for speaker embedding)
 soundfile>=0.12.1
 numpy==2.2.1
+
+# HTTP client for HA webhook notification (WebhookNotifier in pipeline/webhook.py)
+aiohttp>=3.9.0

@@ -110,6 +110,8 @@ INSERT OR IGNORE INTO settings VALUES ('reference_clips_per_speaker',  '5');
 INSERT OR IGNORE INTO settings VALUES ('match_threshold',              '0.50');
 INSERT OR IGNORE INTO settings VALUES ('confirm_threshold',            '0.75');
 INSERT OR IGNORE INTO settings VALUES ('personality_processing',       'false');
+INSERT OR IGNORE INTO settings VALUES ('ha_base_url',                  '');
+INSERT OR IGNORE INTO settings VALUES ('ha_webhook_enabled',           'false');
 """
 
 
@@ -121,6 +123,13 @@ def init(db_path: str) -> None:
     try:
         conn.executescript(SCHEMA)
         # Migrate existing databases: add columns introduced after initial release
+        # Seed new settings rows into existing DBs (INSERT OR IGNORE is idempotent
+        # in the schema script above, but run again here for running containers
+        # that won't re-execute the full schema).
+        conn.execute("INSERT OR IGNORE INTO settings VALUES ('ha_base_url', '')")
+        conn.execute("INSERT OR IGNORE INTO settings VALUES ('ha_webhook_enabled', 'false')")
+        conn.commit()
+
         for migration in (
             "ALTER TABLE interactions ADD COLUMN timings TEXT",
         ):

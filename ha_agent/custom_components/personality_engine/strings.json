@@ -1,0 +1,84 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Personality Engine",
+        "description": "Enable speaker-aware personality and per-device TTS routing for Home Assistant Assist.\n\nAfter installation, configure speaker personalities in **Settings → Devices & Services → Personality Engine → Configure**."
+      }
+    },
+    "abort": {
+      "already_configured": "Personality Engine is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Personality Engine",
+        "menu_options": {
+          "add_user":    "Add speaker",
+          "edit_user":   "Edit speaker",
+          "delete_user": "Delete speaker"
+        }
+      },
+      "add_user": {
+        "title": "Add speaker",
+        "description": "Create a personality profile for a household member. The speaker ID must match the value sent by VoicePipeline (e.g. 'paul', 'cassandra').",
+        "data": {
+          "speaker_id":   "Speaker ID (e.g. 'paul')",
+          "display_name": "Display name (e.g. 'Paul')"
+        },
+        "data_description": {
+          "speaker_id": "Lowercase, letters/numbers/underscores only, max 50 characters."
+        }
+      },
+      "edit_user": {
+        "title": "Edit speaker",
+        "description": "Select a speaker to edit.",
+        "data": {
+          "speaker_id": "Speaker"
+        }
+      },
+      "configure_user": {
+        "title": "Configure personality",
+        "description": "Set the personality, LLM provider, and TTS voice for this speaker.",
+        "data": {
+          "display_name":      "Display name",
+          "system_prompt":     "Personality system prompt",
+          "llm_provider":      "LLM provider",
+          "llm_model":         "Model name",
+          "llm_api_base":      "API base URL (local providers)",
+          "llm_api_key":       "API key (cloud providers)",
+          "fallback_provider": "Fallback LLM provider",
+          "fallback_model":    "Fallback model name",
+          "tts_engine":        "TTS engine (e.g. tts.piper)",
+          "tts_voice":         "TTS voice",
+          "tts_speed":         "Speech speed",
+          "tts_pitch":         "Speech pitch"
+        },
+        "data_description": {
+          "system_prompt":     "Injected before every conversation. Use {name} for the speaker's display name.",
+          "llm_api_base":      "Leave blank to use the provider default (e.g. http://localhost:11434 for Ollama).",
+          "llm_api_key":       "Required for Anthropic and OpenAI. Not logged.",
+          "fallback_provider": "Used if the primary provider fails or times out.",
+          "tts_engine":        "Must match a configured TTS integration entity (e.g. tts.piper, tts.google_cloud).",
+          "tts_voice":         "Leave blank to use the engine default."
+        }
+      },
+      "delete_user": {
+        "title": "Delete speaker",
+        "description": "Select a speaker profile to delete. The 'default' profile cannot be deleted.",
+        "data": {
+          "speaker_id": "Speaker"
+        }
+      }
+    },
+    "abort": {
+      "no_users":           "No speaker profiles found. Add a speaker first.",
+      "no_deletable_users": "No speakers to delete (the 'default' profile cannot be deleted)."
+    },
+    "error": {
+      "invalid_speaker_id": "Speaker ID may only contain lowercase letters, numbers, and underscores.",
+      "speaker_id_too_long": "Speaker ID must be 50 characters or fewer."
+    }
+  }
+}

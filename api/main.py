@@ -30,6 +30,7 @@ from pipeline.models import NoiseSuppressor, VoiceActivityDetector, SpeakerIdent
 from pipeline.orchestrator import VoicePipelineOrchestrator
 from pipeline.retention import RetentionJob
 from pipeline.writer import InteractionWriter
+from pipeline.webhook import WebhookNotifier
 from pipeline.wyoming_server import WyomingServer
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -45,6 +46,8 @@ EMBEDDING_DIR  = os.getenv("EMBEDDING_DIR",  "/data/embeddings")
 MODEL_DIR      = os.getenv("MODEL_DIR",      "/models")
 WYOMING_HOST   = os.getenv("WYOMING_HOST",   "0.0.0.0")
 WYOMING_PORT   = int(os.getenv("WYOMING_PORT", "10300"))
+HA_BASE_URL    = os.getenv("HA_BASE_URL",    "")
+HA_WEBHOOK_ENABLED = os.getenv("HA_WEBHOOK_ENABLED", "false")
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -110,6 +113,8 @@ class SettingsResponse(BaseModel):
     match_threshold: float
     confirm_threshold: float
     personality_processing: bool
+    ha_base_url: str
+    ha_webhook_enabled: bool
 
 
 class SettingsUpdate(BaseModel):
@@ -119,6 +124,8 @@ class SettingsUpdate(BaseModel):
     match_threshold: float | None = None
     confirm_threshold: float | None = None
     personality_processing: bool | None = None
+    ha_base_url: str | None = None
+    ha_webhook_enabled: bool | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -462,6 +469,8 @@ def _settings_response(raw: dict[str, str]) -> SettingsResponse:
         match_threshold=float(raw.get("match_threshold", 0.50)),
         confirm_threshold=float(raw.get("confirm_threshold", 0.75)),
         personality_processing=raw.get("personality_processing", "false").lower() == "true",
+        ha_base_url=raw.get("ha_base_url", HA_BASE_URL),
+        ha_webhook_enabled=raw.get("ha_webhook_enabled", HA_WEBHOOK_ENABLED).lower() == "true",
     )
 
 
@@ -494,8 +503,11 @@ async def lifespan(app: FastAPI):
     orchestrator = VoicePipelineOrchestrator(ns, vad, sid, stt, writer)
     app.state.sid = sid
 
+    # ── HA webhook notifier ─────────────────────────────────────────────
+    notifier = WebhookNotifier(db_path=DB_PATH)
+
     # ── Wyoming STT server ──────────────────────────────────────────────
-    wyoming      = WyomingServer(orchestrator, DB_PATH, host=WYOMING_HOST, port=WYOMING_PORT)
+    wyoming      = WyomingServer(orchestrator, notifier, host=WYOMING_HOST, port=WYOMING_PORT)
     await wyoming.start()
     wyoming_task = asyncio.create_task(wyoming.serve_forever())
 
@@ -515,6 +527,7 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
     await wyoming.stop()
+    await notifier.close()
     scheduler.shutdown(wait=False)
     logger.info("Shutdown complete")
 

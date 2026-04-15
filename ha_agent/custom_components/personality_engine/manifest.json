@@ -1,0 +1,11 @@
+{
+  "domain": "personality_engine",
+  "name": "Personality Engine",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["conversation", "http"],
+  "documentation": "",
+  "iot_class": "calculated",
+  "requirements": [],
+  "version": "1.0.0"
+}

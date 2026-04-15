@@ -11,21 +11,26 @@ Wyoming protocol flow per utterance:
   HA → AudioChunk(s)      (raw PCM chunks)
   HA → AudioStop          server → Transcript
 
+After speaker identification and before the Transcript event is written,
+a webhook is POSTed to the HA Personality Engine (if configured).  This
+gives HA the speaker's identity before it invokes the conversation agent.
+
 The server accepts multiple simultaneous connections; each runs its own
 handler coroutine.
 
 Usage:
-    server = WyomingServer(orchestrator, host="0.0.0.0", port=10300)
+    notifier = WebhookNotifier(db_path)
+    server = WyomingServer(orchestrator, db_path, notifier, host="0.0.0.0", port=10300)
     await server.start()
     task = asyncio.create_task(server.serve_forever())
     ...
     task.cancel()
     await server.stop()
+    await notifier.close()
 """
 
 import asyncio
 import logging
-import sqlite3
 from functools import partial
 
 from wyoming.audio import AudioChunk, AudioStart, AudioStop
@@ -35,6 +40,7 @@ from wyoming.info import AsrModel, AsrProgram, Attribution, Describe, Info
 from wyoming.server import AsyncServer, AsyncEventHandler
 
 from pipeline.orchestrator import VoicePipelineOrchestrator
+from pipeline.webhook import WebhookNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +80,7 @@ class _PipelineEventHandler(AsyncEventHandler):
         self,
         wyoming_info: Info,
         orchestrator: VoicePipelineOrchestrator,
-        db_path: str,
+        notifier: WebhookNotifier,
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
         **kwargs,
@@ -82,7 +88,7 @@ class _PipelineEventHandler(AsyncEventHandler):
         super().__init__(reader, writer, **kwargs)
         self._wyoming_info = wyoming_info
         self._orchestrator = orchestrator
-        self._db_path      = db_path
+        self._notifier     = notifier
         self._chunks:      list[bytes] = []
         self._sample_rate: int  = 16_000
         self._channels:    int  = 1
@@ -123,9 +129,16 @@ class _PipelineEventHandler(AsyncEventHandler):
             result = await self._orchestrator.process(raw_pcm)
             text   = result.transcript if result else ""
 
-            if result and result.matched_speaker and self._personality_enabled():
-                text = f"{result.matched_speaker}: {text}"
+            # POST speaker metadata to HA Personality Engine BEFORE sending
+            # the transcript so the conversation agent can correlate them.
+            if result and result.matched_speaker:
+                await self._notifier.notify(
+                    speaker_id=result.matched_speaker.lower(),
+                    confidence=result.match_confidence or 0.0,
+                )
 
+            # Always send clean transcript — no speaker prefix.
+            # Speaker identity is delivered out-of-band via the webhook above.
             await self.write_event(Transcript(text=text).event())
             logger.info("Wyoming: Transcript sent: %r", text)
 
@@ -136,31 +149,18 @@ class _PipelineEventHandler(AsyncEventHandler):
         return True
 
 
-    def _personality_enabled(self) -> bool:
-        """Read personality_processing setting directly from DB (fast SQLite read)."""
-        try:
-            conn = sqlite3.connect(self._db_path)
-            row  = conn.execute(
-                "SELECT value FROM settings WHERE key = 'personality_processing'"
-            ).fetchone()
-            conn.close()
-            return row is not None and row[0].lower() == "true"
-        except Exception:
-            return False
-
-
 class WyomingServer:
     """Manages the Wyoming TCP server lifecycle."""
 
     def __init__(
         self,
         orchestrator: VoicePipelineOrchestrator,
-        db_path: str,
+        notifier: WebhookNotifier,
         host: str = "0.0.0.0",
         port: int = 10_300,
     ) -> None:
         self._orchestrator = orchestrator
-        self._db_path      = db_path
+        self._notifier     = notifier
         self._uri          = f"tcp://{host}:{port}"
         self._server:  AsyncServer | None = None
 
@@ -172,7 +172,7 @@ class WyomingServer:
         if self._server is None:
             raise RuntimeError("Call start() before serve_forever()")
         await self._server.run(
-            partial(_PipelineEventHandler, _INFO, self._orchestrator, self._db_path)
+            partial(_PipelineEventHandler, _INFO, self._orchestrator, self._notifier)
         )
 
     async def stop(self) -> None:
