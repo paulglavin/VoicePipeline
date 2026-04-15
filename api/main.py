@@ -417,6 +417,43 @@ def _fetch_speakers() -> list[dict]:
     ]
 
 
+def _delete_speaker(speaker_id: str) -> None:
+    with _get_connection() as conn:
+        row = conn.execute(
+            "SELECT name, reference_clips FROM enrolled_speakers WHERE id = ?",
+            (speaker_id,),
+        ).fetchone()
+        if not row:
+            raise LookupError(f"Speaker {speaker_id!r} not found")
+        clips: list[str] = json.loads(row["reference_clips"])
+        for path in clips:
+            try:
+                Path(path).unlink(missing_ok=True)
+            except OSError:
+                pass
+        conn.execute("DELETE FROM enrolled_speakers WHERE id = ?", (speaker_id,))
+
+
+def _clear_speaker_clips(speaker_id: str) -> None:
+    with _get_connection() as conn:
+        row = conn.execute(
+            "SELECT reference_clips FROM enrolled_speakers WHERE id = ?",
+            (speaker_id,),
+        ).fetchone()
+        if not row:
+            raise LookupError(f"Speaker {speaker_id!r} not found")
+        clips: list[str] = json.loads(row["reference_clips"])
+        for path in clips:
+            try:
+                Path(path).unlink(missing_ok=True)
+            except OSError:
+                pass
+        conn.execute(
+            "UPDATE enrolled_speakers SET reference_clips = '[]', avg_confidence = NULL WHERE id = ?",
+            (speaker_id,),
+        )
+
+
 def _settings_response(raw: dict[str, str]) -> SettingsResponse:
     return SettingsResponse(
         pending_retention_days=int(raw.get("pending_retention_days", 7)),
@@ -514,6 +551,24 @@ api = APIRouter(prefix="/api/v1")
 @api.get("/speakers", response_model=list[EnrolledSpeakerOut])
 async def get_speakers():
     return await asyncio.to_thread(_fetch_speakers)
+
+
+@api.delete("/speakers/{speaker_id}", status_code=204)
+async def delete_speaker(speaker_id: str, request: Request):
+    try:
+        await asyncio.to_thread(_delete_speaker, speaker_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    request.app.state.sid.force_refresh()
+
+
+@api.post("/speakers/{speaker_id}/clear-clips", status_code=204)
+async def clear_speaker_clips(speaker_id: str, request: Request):
+    try:
+        await asyncio.to_thread(_clear_speaker_clips, speaker_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    request.app.state.sid.force_refresh()
 
 
 @api.get("/interactions/pending", response_model=list[PendingInteraction])

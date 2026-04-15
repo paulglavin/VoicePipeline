@@ -392,6 +392,34 @@ body {
 
 .speaker-stat strong { color: var(--clr-text); }
 
+.speaker-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--clr-border);
+}
+
+.btn-speaker-action {
+  flex: 1;
+  padding: 5px 10px;
+  border: 1px solid var(--clr-border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--clr-text-muted);
+  font-size: .75rem;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+
+.btn-speaker-action:hover { background: var(--clr-bg); color: var(--clr-text); }
+
+.btn-delete-speaker:hover {
+  background: color-mix(in srgb, var(--clr-red) 12%, transparent);
+  border-color: var(--clr-red);
+  color: var(--clr-red);
+}
+
 /* -----------------------------------------------------------------------
    History
    ----------------------------------------------------------------------- */

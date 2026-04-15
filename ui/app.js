@@ -455,6 +455,43 @@ function buildSpeakerCard(s) {
     card.appendChild(row);
   });
 
+  const actions = document.createElement('div');
+  actions.className = 'speaker-actions';
+
+  const clearBtn = document.createElement('button');
+  clearBtn.className = 'btn-speaker-action btn-clear-clips';
+  clearBtn.textContent = 'Clear clips';
+  clearBtn.title = 'Delete reference audio clips (re-enrol to rebuild)';
+  clearBtn.addEventListener('click', async () => {
+    if (!confirm(`Clear all reference clips for ${s.name}? They will need to re-enrol.`)) return;
+    try {
+      await apiFetch(`/speakers/${s.id}/clear-clips`, { method: 'POST' });
+      showToast(`Reference clips cleared for ${s.name}`);
+      loadSpeakers();
+    } catch (err) {
+      showToast('Failed to clear clips: ' + err.message);
+    }
+  });
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.className = 'btn-speaker-action btn-delete-speaker';
+  deleteBtn.textContent = 'Delete speaker';
+  deleteBtn.title = 'Remove this speaker and all their reference clips';
+  deleteBtn.addEventListener('click', async () => {
+    if (!confirm(`Delete ${s.name} and all their reference clips? This cannot be undone.`)) return;
+    try {
+      await apiFetch(`/speakers/${s.id}`, { method: 'DELETE' });
+      showToast(`${s.name} deleted`);
+      loadSpeakers();
+    } catch (err) {
+      showToast('Failed to delete speaker: ' + err.message);
+    }
+  });
+
+  actions.appendChild(clearBtn);
+  actions.appendChild(deleteBtn);
+  card.appendChild(actions);
+
   return card;
 }
 
