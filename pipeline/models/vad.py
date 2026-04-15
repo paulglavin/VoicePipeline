@@ -1,11 +1,12 @@
 """
 vad.py — SileroVAD ONNX wrapper.
 
-Uses the SileroVAD ONNX model downloaded from HuggingFace on first run.
-Pure onnxruntime inference — no torch dependency.
+The ONNX model is bundled inside the silero-vad pip package — no runtime
+download required.  We copy it to MODEL_DIR on first run so it lives alongside
+the other cached models, then load it with onnxruntime directly.
 
-Model: snakers4/silero-vad  (silero_vad.onnx, ~2 MB)
-Inputs: ['input', 'sr', 'h', 'c']  — standard h/c LSTM state interface.
+Model: silero_vad.onnx from the silero-vad package
+Inputs: ['input', 'sr', 'h', 'c']  — standard LSTM h/c state interface.
 
 process() is synchronous and blocking — call via asyncio.to_thread.
 """
@@ -24,8 +25,8 @@ _MIN_SPEECH_MS = 250     # discard segments shorter than this
 _PADDING_MS    = 100     # silence kept before/after each speech segment
 _CHUNK         = 1536    # samples per inference step (96 ms at 16 kHz)
 
-_HF_REPO  = "snakers4/silero-vad"
-_HF_FILE  = "silero_vad.onnx"
+_PKG_NAME = "silero_vad"          # installed package name
+_PKG_ONNX = "data/silero_vad.onnx"  # path within the package
 
 
 class VoiceActivityDetector:
@@ -44,31 +45,32 @@ class VoiceActivityDetector:
         self._sess       = None
         self._in_names   = []
         self._has_sr_inp = False
-        self._uses_state = False
-        self._state_shape: tuple = ()
         model_path       = Path(model_dir) / "silero_vad" / "silero_vad.onnx"
 
         try:
-            # Delete stale onnx-community model if present from a prior build
-            stale = model_path.parent / "model_q4f16.onnx"
-            if stale.exists():
-                stale.unlink()
-                logger.info("Removed stale onnx-community VAD model")
+            # Remove stale files from previous download attempts
+            for stale_name in ("model_q4f16.onnx",):
+                stale = model_path.parent / stale_name
+                if stale.exists():
+                    stale.unlink()
+                    logger.info("Removed stale VAD model: %s", stale)
 
             if not model_path.exists():
                 model_path.parent.mkdir(parents=True, exist_ok=True)
-                logger.info(
-                    "Downloading SileroVAD ONNX from HuggingFace (%s) …",
-                    _HF_REPO,
-                )
-                from huggingface_hub import hf_hub_download
-                tmp = hf_hub_download(
-                    repo_id=_HF_REPO,
-                    filename=_HF_FILE,
-                )
-                import shutil
-                shutil.copy2(tmp, model_path)
-                logger.info("SileroVAD ONNX saved to %s", model_path)
+                # Locate the ONNX bundled inside the installed silero-vad package
+                import importlib.util, shutil
+                spec = importlib.util.find_spec(_PKG_NAME)
+                if spec is None or spec.origin is None:
+                    raise ImportError(
+                        "silero-vad package is not installed — add it to requirements.txt"
+                    )
+                pkg_onnx = Path(spec.origin).parent / _PKG_ONNX
+                if not pkg_onnx.exists():
+                    raise FileNotFoundError(
+                        f"ONNX not found inside silero-vad package at {pkg_onnx}"
+                    )
+                shutil.copy2(pkg_onnx, model_path)
+                logger.info("SileroVAD ONNX copied from package → %s", model_path)
 
             self._sess = ort.InferenceSession(
                 str(model_path),
@@ -76,12 +78,6 @@ class VoiceActivityDetector:
             )
             self._in_names   = [inp.name for inp in self._sess.get_inputs()]
             self._has_sr_inp = "sr" in self._in_names
-            self._uses_state = "state" in self._in_names  # v4+ combined h+c tensor
-            if self._uses_state:
-                # silero-vad v5 state: (batch=1, seq=1, hidden=128).
-                # Dynamic shape inference from ONNX metadata is unreliable for
-                # quantized exports — the model consistently expects (1, *, 128).
-                self._state_shape = (1, 1, 128)
             logger.info(
                 "SileroVAD ONNX loaded — inputs: %s", self._in_names
             )
@@ -121,30 +117,18 @@ class VoiceActivityDetector:
                     [audio, np.zeros(_CHUNK - remainder, dtype=np.float32)]
                 )
 
-            # Stateful LSTM: state carries context between chunks.
-            # Newer models (inputs: [input, state, sr]) use a single combined
-            # state tensor; older models use separate h and c tensors.
-            if self._uses_state:
-                state: np.ndarray | None = np.zeros(
-                    self._state_shape, dtype=np.float32
-                )
-                h = c = None
-            else:
-                h     = np.zeros((2, 1, 64), dtype=np.float32)
-                c     = np.zeros((2, 1, 64), dtype=np.float32)
-                state = None
+            # Stateful LSTM: h and c carry context between chunks
+            h = np.zeros((2, 1, 64), dtype=np.float32)
+            c = np.zeros((2, 1, 64), dtype=np.float32)
 
             probs: list[float] = []
 
             for i in range(0, len(audio), _CHUNK):
                 chunk = audio[i : i + _CHUNK].reshape(1, -1)
-                inp   = self._make_inputs(chunk, h, c, state)
+                inp   = self._make_inputs(chunk, h, c)
                 outs  = self._sess.run(None, inp)
                 probs.append(float(outs[0].flat[0]))
-                if self._uses_state:
-                    state = outs[1]
-                else:
-                    h, c = outs[1], outs[2]
+                h, c = outs[1], outs[2]
 
             # Collect speech segments from per-chunk probabilities
             segments = _find_segments(
@@ -181,24 +165,14 @@ class VoiceActivityDetector:
     def _make_inputs(
         self,
         chunk: np.ndarray,
-        h: np.ndarray | None,
-        c: np.ndarray | None,
-        state: np.ndarray | None = None,
+        h: np.ndarray,
+        c: np.ndarray,
     ) -> dict:
-        """Build the ONNX input dict, handling v3 (h/c) and v4+ (state) models."""
+        """Build the ONNX input dict, handling models with and without sr."""
         names = self._in_names
-        sr    = np.array(_SR, dtype=np.int64)
-        if self._uses_state:
-            # v4+: [input, state, sr]
-            d: dict = {names[0]: chunk, "state": state}
-            if self._has_sr_inp:
-                d["sr"] = sr
-            return d
-        elif self._has_sr_inp:
-            # v3: [input, sr, h, c]
-            return {names[0]: chunk, "sr": sr, "h": h, "c": c}
+        if self._has_sr_inp:
+            return {names[0]: chunk, "sr": np.array(_SR, dtype=np.int64), "h": h, "c": c}
         else:
-            # v3 without sr: [input, h, c]
             return {names[0]: chunk, names[1]: h, names[2]: c}
 
 

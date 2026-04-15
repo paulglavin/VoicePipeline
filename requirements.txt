@@ -21,6 +21,9 @@ accelerate>=0.33.0        # required by transformers for model loading
 # ONNX model inference (DTLN noise suppressor, SileroVAD, WeSpeaker speaker ID)
 onnxruntime>=1.18.0
 
+# SileroVAD — ONNX model is bundled inside the package (no runtime download needed)
+silero-vad>=5.1
+
 # Speaker identification (WeSpeaker ECAPA-TDNN — ONNX backend, no torch)
 wespeakerruntime>=0.0.4
 
