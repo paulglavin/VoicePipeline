@@ -80,14 +80,13 @@ class PersonalityEngineConfigFlow(
         config_entry: config_entries.ConfigEntry,
     ) -> PersonalityEngineOptionsFlow:
         """Return the options flow handler."""
-        return PersonalityEngineOptionsFlow(config_entry)
+        return PersonalityEngineOptionsFlow()
 
 
 class PersonalityEngineOptionsFlow(config_entries.OptionsFlow):
     """Handle per-user personality configuration via the options flow."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self.config_entry = config_entry
+    def __init__(self) -> None:
         self._speaker_id: str | None = None
         self._existing_config: dict = {}
 
