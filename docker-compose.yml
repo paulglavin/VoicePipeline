@@ -18,6 +18,7 @@ services:
       # Required — granite-4.0-1b-speech is a gated model.
       # Set HF_TOKEN in a .env file alongside docker-compose.yml.
       HF_TOKEN: ${HF_TOKEN}
+      DTLN_MIX: "0"         # 0 = bypass NS entirely for audio quality testing
     deploy:
       resources:
         reservations:
