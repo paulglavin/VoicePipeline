@@ -22,8 +22,8 @@ services:
       # HA Personality Engine integration.
       # Set HA_BASE_URL to your HA instance and flip HA_WEBHOOK_ENABLED to "true"
       # once the personality_engine custom component is installed in HA.
-      HA_BASE_URL: ""           # e.g. http://homeassistant.local:8123
-      HA_WEBHOOK_ENABLED: "false"
+      HA_BASE_URL: "http://192.168.2.30:8123"           # e.g. http://homeassistant.local:8123
+      HA_WEBHOOK_ENABLED: "true"
     deploy:
       resources:
         reservations:
