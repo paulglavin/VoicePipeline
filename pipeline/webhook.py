@@ -140,12 +140,12 @@ class WebhookNotifier:
             conn.close()
 
             settings = {r[0]: r[1] for r in rows}
-            # Use env var as fallback when the DB value is absent OR empty
-            db_url = settings.get("ha_base_url", "").strip()
-            url = db_url if db_url else env_url
-
-            db_enabled = settings.get("ha_webhook_enabled", "").strip().lower()
-            enabled = (db_enabled == "true") if db_enabled else env_enabled
+            # Env vars take priority when set; DB provides UI-controlled overrides.
+            url = env_url or settings.get("ha_base_url", "").strip()
+            if env_enabled:
+                enabled = True
+            else:
+                enabled = settings.get("ha_webhook_enabled", "false").lower() == "true"
             return url, enabled
 
         except Exception as exc:
