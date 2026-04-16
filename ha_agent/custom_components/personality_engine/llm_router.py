@@ -285,6 +285,8 @@ class LlamaCppProvider(LLMProvider):
             ],
             "temperature": temperature,
             "max_tokens": max_tokens,
+            # Prevent reasoning models from deciding to make tool calls
+            "tool_choice": "none",
         }
 
         session = async_get_clientsession(self.hass)
@@ -299,9 +301,16 @@ class LlamaCppProvider(LLMProvider):
             raise LLMProviderError(f"llama.cpp request failed: {exc}") from exc
 
         try:
-            content = data["choices"][0]["message"]["content"]
+            message = data["choices"][0]["message"]
+            content = message.get("content") or message.get("reasoning_content", "")
             if not content:
-                raise LLMProviderError(f"llama.cpp returned empty content for model {model!r}")
+                finish_reason = data["choices"][0].get("finish_reason", "unknown")
+                _LOGGER.warning(
+                    "llama.cpp returned empty content and reasoning_content for model %r "
+                    "(finish_reason=%r). Full response: %s",
+                    model, finish_reason, data,
+                )
+                raise LLMProviderError(f"llama.cpp returned empty content for model {model!r} (finish_reason={finish_reason!r})")
             return content.strip()
         except (KeyError, IndexError, TypeError, AttributeError) as exc:
             raise LLMProviderError(f"Unexpected llama.cpp response shape: {data}") from exc

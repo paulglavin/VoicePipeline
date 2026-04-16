@@ -275,7 +275,6 @@ class PersonalityConversationAgent(ConversationEntity):
         matched = response_type in (
             IntentResponseType.ACTION_DONE,
             IntentResponseType.QUERY_ANSWER,
-            IntentResponseType.PARTIAL_ACTION_DONE,
         )
 
         if matched:

@@ -160,11 +160,15 @@ Configured in the **Settings** tab or directly in the database:
 
 ---
 
-## Personality processing
+## Personality Engine (HA custom component)
 
-When enabled in Settings, the speaker's name is prefixed to the transcript sent to Home Assistant (e.g. `Paul: turn the lights off`). This allows an LLM conversation agent in HA to personalise its responses.
+The optional [`ha_agent/`](ha_agent/README.md) component adds per-speaker personality to Home Assistant Assist. Rather than prefixing the transcript, it operates out-of-band:
 
-**Leave this off** if HA is set to "Process locally" — the rules-based intent handler does not understand the prefix and commands will fail. Only enable it once you have an LLM conversation agent configured in HA.
+1. VoicePipeline POSTs speaker identity to an HA webhook immediately after identification
+2. The Personality Engine conversation agent reads that cached identity when the Wyoming transcript arrives
+3. All utterances are routed through a per-speaker LLM — HA's built-in intent handler executes control commands, and the LLM generates a personality-flavoured spoken response regardless
+
+See [ha_agent/README.md](ha_agent/README.md) for installation and configuration.
 
 ---
 
