@@ -292,7 +292,11 @@ class PersonalityEngineOptionsFlow(config_entries.OptionsFlow):
             }
         )
 
-        return self.async_show_form(step_id="configure_user", data_schema=schema)
+        return self.async_show_form(
+            step_id="configure_user",
+            data_schema=schema,
+            description_placeholders={"name": existing.get("display_name", "the speaker")},
+        )
 
     # ------------------------------------------------------------------
     # Delete user

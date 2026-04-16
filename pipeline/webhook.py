@@ -76,7 +76,7 @@ class WebhookNotifier:
 
         try:
             await self._post(url, payload)
-            logger.debug(
+            logger.info(
                 "Webhook: POST → HA succeeded  speaker=%s conf=%.2f",
                 speaker_id, confidence,
             )
@@ -140,8 +140,12 @@ class WebhookNotifier:
             conn.close()
 
             settings = {r[0]: r[1] for r in rows}
-            url     = settings.get("ha_base_url", env_url).strip()
-            enabled = settings.get("ha_webhook_enabled", "true" if env_enabled else "false").lower() == "true"
+            # Use env var as fallback when the DB value is absent OR empty
+            db_url = settings.get("ha_base_url", "").strip()
+            url = db_url if db_url else env_url
+
+            db_enabled = settings.get("ha_webhook_enabled", "").strip().lower()
+            enabled = (db_enabled == "true") if db_enabled else env_enabled
             return url, enabled
 
         except Exception as exc:
