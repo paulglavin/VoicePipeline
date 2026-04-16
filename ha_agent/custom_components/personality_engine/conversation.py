@@ -119,6 +119,9 @@ class PersonalityConversationAgent(ConversationEntity):
         Returns:
             ConversationResult with the LLM-generated response text.
         """
+        _LOGGER.warning(
+            "PersonalityEngine v2: async_process called text=%r", user_input.text[:60]
+        )
         conversation_id: str | None = user_input.conversation_id
         device_id: str | None = getattr(user_input, "device_id", None)
 
@@ -165,7 +168,13 @@ class PersonalityConversationAgent(ConversationEntity):
             )
         except LLMProviderError as exc:
             _LOGGER.error("PersonalityEngine: LLM failed for %s: %s", speaker_id, exc)
-            # Fall back to HA's response if we have one, otherwise generic error
+            llm_response = ha_action_result or (
+                "Sorry, I'm having trouble thinking right now. Please try again."
+            )
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.exception(
+                "PersonalityEngine: unexpected error for %s: %s", speaker_id, exc
+            )
             llm_response = ha_action_result or (
                 "Sorry, I'm having trouble thinking right now. Please try again."
             )
@@ -255,7 +264,7 @@ class PersonalityConversationAgent(ConversationEntity):
                 conversation_id=user_input.conversation_id,
                 context=user_input.context,
                 language=user_input.language,
-                agent_id="homeassistant",
+                agent_id="conversation.home_assistant",
                 device_id=getattr(user_input, "device_id", None),
             )
         except Exception as exc:

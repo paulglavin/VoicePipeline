@@ -85,7 +85,7 @@ class OllamaProvider(LLMProvider):
         config: dict,
     ) -> str:
         """Generate via Ollama /api/chat endpoint."""
-        api_base = config.get("api_base", "http://localhost:11434").rstrip("/")
+        api_base = (config.get("api_base") or "http://localhost:11434").rstrip("/")
         model = config.get("model", "llama3.2:3b")
         url = f"{api_base}/api/chat"
 
@@ -114,8 +114,11 @@ class OllamaProvider(LLMProvider):
             raise LLMProviderError(f"Ollama request failed: {exc}") from exc
 
         try:
-            return data["message"]["content"].strip()
-        except (KeyError, TypeError) as exc:
+            content = data["message"]["content"]
+            if not content:
+                raise LLMProviderError(f"Ollama returned empty content for model {model!r}")
+            return content.strip()
+        except (KeyError, TypeError, AttributeError) as exc:
             raise LLMProviderError(f"Unexpected Ollama response shape: {data}") from exc
 
 
@@ -173,8 +176,11 @@ class AnthropicProvider(LLMProvider):
             raise LLMProviderError(f"Anthropic request failed: {exc}") from exc
 
         try:
-            return data["content"][0]["text"].strip()
-        except (KeyError, IndexError, TypeError) as exc:
+            content = data["content"][0]["text"]
+            if not content:
+                raise LLMProviderError(f"Anthropic returned empty content for model {model!r}")
+            return content.strip()
+        except (KeyError, IndexError, TypeError, AttributeError) as exc:
             raise LLMProviderError(f"Unexpected Anthropic response shape: {data}") from exc
 
 
@@ -203,7 +209,7 @@ class OpenAIProvider(LLMProvider):
         if not api_key:
             raise LLMProviderError("OpenAI api_key is not configured")
 
-        api_base = config.get("api_base", self._DEFAULT_API_BASE).rstrip("/")
+        api_base = (config.get("api_base") or self._DEFAULT_API_BASE).rstrip("/")
         model = config.get("model", "gpt-4o-mini")
         url = f"{api_base}/v1/chat/completions"
 
@@ -233,8 +239,11 @@ class OpenAIProvider(LLMProvider):
             raise LLMProviderError(f"OpenAI request failed: {exc}") from exc
 
         try:
-            return data["choices"][0]["message"]["content"].strip()
-        except (KeyError, IndexError, TypeError) as exc:
+            content = data["choices"][0]["message"]["content"]
+            if not content:
+                raise LLMProviderError(f"OpenAI returned empty content for model {model!r}")
+            return content.strip()
+        except (KeyError, IndexError, TypeError, AttributeError) as exc:
             raise LLMProviderError(f"Unexpected OpenAI response shape: {data}") from exc
 
 
@@ -258,7 +267,7 @@ class LlamaCppProvider(LLMProvider):
         config: dict,
     ) -> str:
         """Generate via llama.cpp OpenAI-compatible API."""
-        api_base = config.get("api_base", "http://localhost:8080").rstrip("/")
+        api_base = (config.get("api_base") or "http://localhost:8080").rstrip("/")
         model = config.get("model", "local-model")
         url = f"{api_base}/v1/chat/completions"
 
@@ -290,8 +299,11 @@ class LlamaCppProvider(LLMProvider):
             raise LLMProviderError(f"llama.cpp request failed: {exc}") from exc
 
         try:
-            return data["choices"][0]["message"]["content"].strip()
-        except (KeyError, IndexError, TypeError) as exc:
+            content = data["choices"][0]["message"]["content"]
+            if not content:
+                raise LLMProviderError(f"llama.cpp returned empty content for model {model!r}")
+            return content.strip()
+        except (KeyError, IndexError, TypeError, AttributeError) as exc:
             raise LLMProviderError(f"Unexpected llama.cpp response shape: {data}") from exc
 
 
@@ -353,14 +365,16 @@ async def route_to_llm(
     primary_config = {**config, "model": model}
 
     _LOGGER.debug("LLM: trying %s / %s", provider, model)
+    primary_error: str = ""
     try:
         response = await primary_cls(hass).generate(
             system_prompt, user_message, temperature, max_tokens, primary_config
         )
         _LOGGER.debug("LLM: %s succeeded (%d chars)", provider, len(response))
         return response
-    except LLMProviderError as primary_exc:
-        _LOGGER.warning("LLM primary %s/%s failed: %s", provider, model, primary_exc)
+    except LLMProviderError as exc:
+        primary_error = str(exc)
+        _LOGGER.warning("LLM primary %s/%s failed: %s", provider, model, exc)
 
     if fallback_provider and fallback_model:
         fallback_cls = LLM_REGISTRY.get(fallback_provider)
@@ -370,7 +384,12 @@ async def route_to_llm(
                 f"{fallback_provider!r} is unknown"
             )
 
-        fallback_config = {**config, "model": fallback_model}
+        fallback_config = {
+            **config,
+            "model":    fallback_model,
+            "api_base": config.get("fallback_api_base") or config.get("api_base", ""),
+            "api_key":  config.get("fallback_api_key") or config.get("api_key", ""),
+        }
         _LOGGER.info("LLM: falling back to %s / %s", fallback_provider, fallback_model)
         try:
             response = await fallback_cls(hass).generate(
@@ -378,12 +397,12 @@ async def route_to_llm(
             )
             _LOGGER.debug("LLM: fallback %s succeeded (%d chars)", fallback_provider, len(response))
             return response
-        except LLMProviderError as fallback_exc:
+        except LLMProviderError as exc:
             _LOGGER.error(
-                "LLM fallback %s/%s also failed: %s", fallback_provider, fallback_model, fallback_exc
+                "LLM fallback %s/%s also failed: %s", fallback_provider, fallback_model, exc
             )
             raise LLMProviderError(
-                f"All LLM providers failed. Primary: {primary_exc}. Fallback: {fallback_exc}"
-            ) from fallback_exc
+                f"All LLM providers failed. Primary: {primary_error}. Fallback: {exc}"
+            ) from exc
 
     raise LLMProviderError(f"LLM provider {provider}/{model} failed and no fallback configured")

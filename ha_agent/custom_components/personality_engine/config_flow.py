@@ -221,6 +221,8 @@ class PersonalityEngineOptionsFlow(config_entries.OptionsFlow):
                     "api_key":           user_input.get("llm_api_key", ""),
                     "fallback_provider": user_input.get("fallback_provider", ""),
                     "fallback_model":    user_input.get("fallback_model", ""),
+                    "fallback_api_base": user_input.get("fallback_api_base", ""),
+                    "fallback_api_key":  user_input.get("fallback_api_key", ""),
                 },
                 "tts": {
                     "engine": user_input.get("tts_engine", "tts.piper"),
@@ -255,10 +257,12 @@ class PersonalityEngineOptionsFlow(config_entries.OptionsFlow):
                     "llm_model", default=llm.get("model", "llama3.2:3b")
                 ): str,
                 vol.Optional(
-                    "llm_api_base", default=llm.get("api_base", "")
+                    "llm_api_base",
+                    description={"suggested_value": llm.get("api_base", "")},
                 ): str,
                 vol.Optional(
-                    "llm_api_key", default=""
+                    "llm_api_key",
+                    description={"suggested_value": ""},
                 ): selector.TextSelector(
                     selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
                 ),
@@ -271,13 +275,26 @@ class PersonalityEngineOptionsFlow(config_entries.OptionsFlow):
                     )
                 ),
                 vol.Optional(
-                    "fallback_model", default=llm.get("fallback_model", "")
+                    "fallback_model",
+                    description={"suggested_value": llm.get("fallback_model", "")},
                 ): str,
                 vol.Optional(
-                    "tts_engine", default=tts.get("engine", "tts.piper")
+                    "fallback_api_base",
+                    description={"suggested_value": llm.get("fallback_api_base", "")},
                 ): str,
                 vol.Optional(
-                    "tts_voice", default=tts.get("voice", "")
+                    "fallback_api_key",
+                    description={"suggested_value": ""},
+                ): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+                ),
+                vol.Optional(
+                    "tts_engine",
+                    description={"suggested_value": tts.get("engine", "tts.piper")},
+                ): str,
+                vol.Optional(
+                    "tts_voice",
+                    description={"suggested_value": tts.get("voice", "")},
                 ): str,
                 vol.Optional(
                     "tts_speed", default=tts.get("speed", 1.0)
