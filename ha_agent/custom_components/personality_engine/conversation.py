@@ -17,7 +17,6 @@ Phase 2 extension points (marked with # PHASE2):
   - Confidence-weighted identity disclosure to LLM
 """
 
-import asyncio
 import logging
 import time
 from typing import Literal
@@ -35,17 +34,12 @@ from homeassistant.helpers.intent import IntentResponse, IntentResponseType
 
 from .const import DATA_CONFIG_MANAGER, DATA_SPEAKER_CACHE, DOMAIN
 from .llm_router import LLMProviderError, route_to_llm
-from .tts_router import resolve_satellite_media_player, synthesize_speech
 
 _LOGGER = logging.getLogger(__name__)
 
 # Seconds back from now to search in the speaker cache.
 # Must be > worst-case pipeline latency between webhook and transcript arrival.
 _CACHE_WINDOW_SECONDS = 2.0
-
-# Milliseconds to wait after a successful local intent before returning,
-# giving intent scripts time to call their own TTS if configured.
-_INTENT_SETTLE_MS = 500
 
 # Keywords that strongly suggest a local HA control intent
 _CONTROL_KEYWORDS: frozenset[str] = frozenset({
@@ -110,27 +104,32 @@ class PersonalityConversationAgent(ConversationEntity):
     async def async_process(self, user_input: ConversationInput) -> ConversationResult:
         """Process one utterance through the personality pipeline.
 
+        Flow:
+          1. Identify speaker from webhook cache
+          2. Try local HA intent so the action actually executes (lights turn on, etc.)
+          3. Always route through LLM for the spoken response — HA's generic
+             "Turned on the light" is replaced with a personality-flavoured reply.
+             The ha_action_result context tells the LLM what was done so it can
+             confirm it in character.
+          4. On LLM failure: fall back to the HA response if one exists.
+
         Args:
             user_input: ConversationInput from the HA Assist pipeline.
 
         Returns:
-            ConversationResult with the agent's response text.
+            ConversationResult with the LLM-generated response text.
         """
         conversation_id: str | None = user_input.conversation_id
-        # device_id is the HA device ID of the satellite (e.g. ESPHome device).
-        # We resolve it to a satellite entity ID and then to a media_player.
         device_id: str | None = getattr(user_input, "device_id", None)
 
         # ── 1. Speaker lookup ──────────────────────────────────────────
         cache_entry = self._get_recent_speaker_from_cache()
         if cache_entry:
-            speaker_id   = cache_entry["speaker_id"]
-            confidence   = cache_entry["confidence"]
-            interaction_id = cache_entry.get("interaction_id")
+            speaker_id     = cache_entry["speaker_id"]
+            confidence     = cache_entry["confidence"]
         else:
-            speaker_id   = "default"
-            confidence   = 0.0
-            interaction_id = None
+            speaker_id     = "default"
+            confidence     = 0.0
 
         _LOGGER.info(
             "PersonalityEngine: conv=%s device=%s speaker=%s conf=%.2f text=%r",
@@ -142,54 +141,36 @@ class PersonalityConversationAgent(ConversationEntity):
         )
 
         # ── 2. User config ─────────────────────────────────────────────
-        user_config = self._config_manager.get_user_config(speaker_id)
+        user_config  = self._config_manager.get_user_config(speaker_id)
         display_name = user_config.get("display_name", speaker_id.capitalize())
 
-        # ── 3. Satellite → media_player resolution ─────────────────────
-        # device_id here is the HA device ID; resolve to satellite entity ID first
-        satellite_entity_id = await self._resolve_satellite_entity(device_id)
-        media_player = await resolve_satellite_media_player(
-            self.hass, satellite_entity_id
-        )
-
-        # ── 4. Try local intent first ──────────────────────────────────
+        # ── 3. Try local intent (executes the HA action) ───────────────
+        ha_action_result: str | None = None
         if self._is_likely_local_intent(user_input.text):
-            _LOGGER.debug(
-                "PersonalityEngine: trying local intent for %r", user_input.text
-            )
             local_result = await self._try_local_intent(user_input)
             if local_result is not None:
-                # Intent matched — HA handles the action + its own response TTS.
-                # Wait briefly for intent scripts to fire their own TTS.
-                await asyncio.sleep(_INTENT_SETTLE_MS / 1000)
-                _LOGGER.info(
-                    "PersonalityEngine: local intent matched for speaker=%s", speaker_id
+                ha_action_result = (
+                    local_result.response.speech
+                    .get("plain", {})
+                    .get("speech", "")
                 )
-                return local_result
+                _LOGGER.debug(
+                    "PersonalityEngine: local intent matched — HA says %r", ha_action_result
+                )
 
-        # ── 5. LLM fallback ────────────────────────────────────────────
-        _LOGGER.debug(
-            "PersonalityEngine: routing to LLM for speaker=%s", speaker_id
-        )
+        # ── 4. LLM response (always) ───────────────────────────────────
         try:
             llm_response = await self._generate_llm_response(
-                user_input.text, user_config, display_name
+                user_input.text, user_config, display_name, ha_action_result
             )
         except LLMProviderError as exc:
             _LOGGER.error("PersonalityEngine: LLM failed for %s: %s", speaker_id, exc)
-            llm_response = (
+            # Fall back to HA's response if we have one, otherwise generic error
+            llm_response = ha_action_result or (
                 "Sorry, I'm having trouble thinking right now. Please try again."
             )
 
-        # ── 6. TTS dispatch ────────────────────────────────────────────
-        await synthesize_speech(
-            self.hass,
-            message=llm_response,
-            tts_config=user_config.get("tts", {}),
-            target_device=media_player,
-        )
-
-        # ── 7. Build ConversationResult ────────────────────────────────
+        # ── 5. Return result — HA pipeline handles TTS ─────────────────
         response = IntentResponse(language=user_input.language)
         response.async_set_speech(llm_response)
 
@@ -299,14 +280,23 @@ class PersonalityConversationAgent(ConversationEntity):
     # LLM
 
     async def _generate_llm_response(
-        self, user_message: str, user_config: dict, display_name: str
+        self,
+        user_message: str,
+        user_config: dict,
+        display_name: str,
+        ha_action_result: str | None = None,
     ) -> str:
         """Generate a personalised LLM response.
 
         Args:
-            user_message: The user's utterance text.
-            user_config:  Full per-user config dict.
-            display_name: Human-readable name for the speaker (for prompt injection).
+            user_message:     The user's utterance text.
+            user_config:      Full per-user config dict.
+            display_name:     Human-readable name for the speaker.
+            ha_action_result: HA's confirmation text if a local intent was
+                              executed (e.g. "Turned on the light").  When set,
+                              the LLM is told the action already happened and
+                              should confirm it in character rather than attempt
+                              to perform it again.
 
         Returns:
             Generated response text.
@@ -322,8 +312,14 @@ class PersonalityConversationAgent(ConversationEntity):
             "system_prompt",
             "You are a helpful home assistant. Keep responses concise.",
         )
-        # Personalise prompt with the speaker's display name
         system_prompt = f"The user's name is {display_name}. {system_prompt}"
+
+        if ha_action_result:
+            system_prompt += (
+                f"\n\nThe home automation system has already executed the user's request. "
+                f"HA confirmed: '{ha_action_result}'. "
+                f"Briefly confirm what was done, in character. One sentence."
+            )
 
         return await route_to_llm(
             hass=self.hass,
