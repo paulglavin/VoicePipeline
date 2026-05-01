@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-_WEBHOOK_PATH = "/api/webhook/personality_engine_input"
+_WEBHOOK_PATH = "/api/webhook/personality_llm_input"
 _TIMEOUT_SECONDS = 1.0
 
 

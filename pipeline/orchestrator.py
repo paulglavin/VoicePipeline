@@ -17,6 +17,7 @@ InteractionWriter.write() is fire-and-forget (asyncio.create_task).
 import asyncio
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -36,6 +37,7 @@ _SAMPLE_RATE = 16_000
 
 @dataclass
 class PipelineResult:
+    interaction_id:   str
     transcript:       str
     duration_ms:      int
     vad_confidence:   float
@@ -135,8 +137,10 @@ class VoicePipelineOrchestrator:
         timings = {"ns": ns_ms, "vad": vad_ms, "sid": sid_ms, "stt": stt_ms, "total": total_ms}
 
         # ── 6. Write (fire-and-forget) ──────────────────────────────────
+        interaction_id = str(uuid.uuid4())
         asyncio.create_task(
             self._writer.write(
+                interaction_id=interaction_id,
                 audio_bytes=speech_pcm,
                 transcript=transcript,
                 duration_ms=duration_ms,
@@ -150,6 +154,7 @@ class VoicePipelineOrchestrator:
         )
 
         result = PipelineResult(
+            interaction_id=interaction_id,
             transcript=transcript,
             duration_ms=duration_ms,
             vad_confidence=vad_conf,

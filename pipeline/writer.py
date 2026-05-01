@@ -66,6 +66,7 @@ class InteractionWriter:
         match_confidence: float | None,
         embedding: np.ndarray | None,
         timings: dict | None = None,
+        interaction_id: str | None = None,
     ) -> str:
         """
         Write a completed interaction record.
@@ -73,7 +74,7 @@ class InteractionWriter:
         Returns the interaction UUID. Any exception is caught and logged —
         the pipeline should never be blocked or crashed by a write failure.
         """
-        interaction_id = str(uuid.uuid4())
+        interaction_id = interaction_id or str(uuid.uuid4())
         recorded_at = datetime.now(timezone.utc).isoformat()
 
         try:

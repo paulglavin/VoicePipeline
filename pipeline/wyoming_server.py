@@ -135,6 +135,7 @@ class _PipelineEventHandler(AsyncEventHandler):
                 await self._notifier.notify(
                     speaker_id=result.matched_speaker.lower(),
                     confidence=result.match_confidence or 0.0,
+                    interaction_id=result.interaction_id,
                 )
 
             # Always send clean transcript — no speaker prefix.
