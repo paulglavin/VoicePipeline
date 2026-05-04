@@ -734,7 +734,9 @@ async def reload_models(request: Request):
                                   ms.stt_model, ms.stt_base_url, ms.stt_api_key, ms.stt_prompt),
                 asyncio.to_thread(SpeakerIdentifier, MODEL_DIR, DB_PATH, ms.speaker_id_model),
             )
+            old_stt = request.app.state.orchestrator._stt
             request.app.state.orchestrator.swap_stt(new_stt)
+            await asyncio.to_thread(old_stt.unload)
             request.app.state.orchestrator.swap_sid(new_sid)
             request.app.state.sid = new_sid
             request.app.state.model_status = {"status": "ready"}

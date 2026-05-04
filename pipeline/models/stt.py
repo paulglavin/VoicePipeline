@@ -51,6 +51,9 @@ class SpeechToText:
     def transcribe(self, pcm_bytes: bytes) -> str:
         return self._impl.transcribe(pcm_bytes)
 
+    def unload(self) -> None:
+        self._impl.unload()
+
 
 def _is_hf_model_cached(cache_dir: str, model_id: str) -> bool:
     """Return True if the HuggingFace model snapshot is already on disk."""
@@ -114,6 +117,17 @@ class _LocalSTT:
     @property
     def available(self) -> bool:
         return self._model is not None and self._processor is not None
+
+    def unload(self) -> None:
+        self._model     = None
+        self._processor = None
+        self._tokenizer = None
+        try:
+            import torch
+            torch.cuda.empty_cache()
+            logger.info("Local STT unloaded — CUDA cache cleared")
+        except ImportError:
+            pass
 
     def transcribe(self, pcm_bytes: bytes) -> str:
         if not self.available or not pcm_bytes:
@@ -179,6 +193,9 @@ class _RemoteSTT:
     @property
     def available(self) -> bool:
         return self._available
+
+    def unload(self) -> None:
+        pass
 
     def transcribe(self, pcm_bytes: bytes) -> str:
         if not self._available or not pcm_bytes:
