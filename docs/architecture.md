@@ -178,7 +178,7 @@ The clean transcript (no speaker prefix) is always what Wyoming returns to HA. S
 
 **Implementation:** `pipeline/webhook.py` — `WebhookNotifier`
 
-When a speaker is identified, `WebhookNotifier.notify()` is awaited **before** the Wyoming `Transcript` event is written. This races the webhook ahead of the transcript so [Personality LLM](https://github.com/Paul-Glavin/personality_llm) can cache the speaker identity before the conversation agent is invoked.
+When a speaker is identified, `WebhookNotifier.notify()` is awaited **before** the Wyoming `Transcript` event is written. This races the webhook ahead of the transcript so [Personality LLM](https://github.com/PaulGlavin/personality_llm) can cache the speaker identity before the conversation agent is invoked.
 
 ```
 POST {ha_base_url}/api/webhook/personality_llm_input

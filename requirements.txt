@@ -7,17 +7,6 @@ python-multipart==0.0.26
 # Wyoming protocol (Home Assistant STT integration)
 wyoming>=1.5.3
 
-# PyTorch — CUDA 12.8 build installed in Dockerfile (RTX 50-series / Blackwell).
-# Only required for STT (Granite 4.0 1B Speech via transformers).
-# VAD and speaker ID now use pure ONNX; torch can be removed once STT is migrated.
-torch>=2.7.0
-
-# STT — IBM Granite 4.0 1B Speech (transformers / torch backend)
-# TODO: migrate to onnx-community/granite-4.0-1b-speech-ONNX when available
-transformers>=4.45.0
-huggingface_hub>=0.24.0
-accelerate>=0.33.0        # required by transformers for model loading
-
 # ONNX model inference (DTLN noise suppressor, SileroVAD, WeSpeaker speaker ID)
 onnxruntime>=1.18.0
 
@@ -31,5 +20,6 @@ wespeakerruntime>=0.0.4
 soundfile>=0.12.1
 numpy==2.2.1
 
-# HTTP client for HA webhook notification (WebhookNotifier in pipeline/webhook.py)
+# HTTP clients — aiohttp for HA webhook, httpx for remote STT transcriptions endpoint
 aiohttp>=3.9.0
+httpx>=0.27.0

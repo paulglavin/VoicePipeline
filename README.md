@@ -4,7 +4,7 @@ A self-hosted voice pipeline for Home Assistant that adds speaker identification
 
 Audio from Home Assistant travels through a four-stage ML pipeline: noise suppression → voice activity detection → speaker identification → speech-to-text. Every utterance is stored locally, and a management UI lets you review low-confidence detections and enrol household members.
 
-Designed to work alongside the [Personality LLM](https://github.com/Paul-Glavin/personality_llm) Home Assistant integration, which uses speaker identity to deliver per-person personality and tone.
+Designed to work alongside the [Personality LLM](https://github.com/PaulGlavin/personality_llm) Home Assistant integration, which uses speaker identity to deliver per-person personality and tone.
 
 ---
 
@@ -27,41 +27,61 @@ Without Personality LLM, VoicePipeline still works as a standard Wyoming STT pro
 ## Requirements
 
 - Docker + Docker Compose
-- NVIDIA GPU with `nvidia-container-toolkit` installed (used for local STT)
-  - Not required if using a [remote STT endpoint](#configuring-models)
-- ~3 GB free disk space for model weights (downloaded on first run)
 - Ports `8000` (management UI) and `10300` (Wyoming) available on the host
+- **For local Granite STT only**: NVIDIA GPU with `nvidia-container-toolkit` installed, CUDA 12.8+, ~3 GB free disk space for model weights
+  - Not required if using the slim image with a [remote STT endpoint](#configuring-models)
+
+---
+
+## Docker images
+
+Pre-built images are published to the GitHub Container Registry on every push to `main`:
+
+| Image | Size | GPU required | STT |
+|-------|------|-------------|-----|
+| `ghcr.io/paulglavin/voicepipeline:latest` | ~400 MB | No | Remote endpoint |
+| `ghcr.io/paulglavin/voicepipeline:cuda` | ~2.5 GB | Yes (CUDA 12.8+) | Local Granite 4.0 1B |
+
+**Most users should start with `:latest`** — configure a remote STT endpoint in the management UI after first boot. Use `:cuda` only if you want to run Granite on-device.
 
 ---
 
 ## Installation
 
-### 1. Clone and configure
+### 1. Configure
 
 ```bash
-git clone https://github.com/Paul-Glavin/VoicePipeline
+git clone https://github.com/PaulGlavin/VoicePipeline
 cd VoicePipeline
 cp .env.example .env
 ```
 
-Edit `.env` and add your HuggingFace token (required for the default Granite STT model):
+If you plan to use the `:cuda` image with the default Granite STT model, add your HuggingFace token to `.env`:
 
 ```
 HF_TOKEN=hf_your_token_here
 ```
 
-> If you plan to use a **remote STT endpoint** instead of the local Granite model, you can skip the HuggingFace token — configure the remote endpoint in the management UI after first boot.
+Skip this if using `:latest` with a remote STT endpoint.
 
-### 2. Build and start
+### 2. Start
 
 ```bash
-docker compose build
 docker compose up -d
 ```
 
-> **Portainer users**: run `docker compose build` manually before using Portainer to start the container. Large CUDA wheel downloads can time out in Portainer's build runner.
+Docker Compose pulls the pre-built image automatically. The management UI is available at `http://<your-server-ip>:8000`.
 
-First boot downloads model weights to `./models`:
+> **To use the CUDA image**, edit `docker-compose.yml` and change the image tag from `:latest` to `:cuda`, then add the `nvidia` runtime and `HF_TOKEN` to the service definition.
+
+> **To build locally** (development or custom changes):
+> ```bash
+> docker compose build
+> docker compose up -d
+> ```
+> For the CUDA variant: `docker compose build --build-arg ENABLE_LOCAL_STT=true`
+
+First boot with the CUDA image downloads model weights to `./models`:
 
 | Model | Size | Notes |
 |-------|------|-------|
@@ -70,7 +90,7 @@ First boot downloads model weights to `./models`:
 | WeSpeaker ECAPA-TDNN | ~50 MB | Speaker ID — downloaded by wespeakerruntime |
 | Granite 4.0 1B Speech | ~2 GB | STT — requires `HF_TOKEN`, downloaded from HuggingFace |
 
-The container's healthcheck allows 180 seconds for first-run downloads. Subsequent starts are fast — `./models` is a host bind mount that survives rebuilds.
+The `./models` directory is a host bind mount that survives image updates.
 
 ### 3. Add the Wyoming integration in Home Assistant
 
@@ -137,7 +157,7 @@ The default WeSpeaker VoxCeleb ResNet34 model is downloaded automatically. To us
 
 ## Personality LLM integration
 
-[Personality LLM](https://github.com/Paul-Glavin/personality_llm) is a Home Assistant custom integration that delivers per-speaker personality from a local LLM. VoicePipeline feeds it speaker identity via a webhook.
+[Personality LLM](https://github.com/PaulGlavin/personality_llm) is a Home Assistant custom integration that delivers per-speaker personality from a local LLM. VoicePipeline feeds it speaker identity via a webhook.
 
 ### How it works
 
@@ -157,7 +177,7 @@ The Personality LLM integration caches this for 2 seconds. When the Wyoming tran
 
 ### Configuration
 
-1. Install [Personality LLM](https://github.com/Paul-Glavin/personality_llm) via HACS
+1. Install [Personality LLM](https://github.com/PaulGlavin/personality_llm) via HACS
 2. In the Personality LLM options, enable **per-user personality** and create a profile for each speaker (use the same names you enrolled in VoicePipeline)
 3. In VoicePipeline **Settings → Home Assistant Integration**:
    - Enable the HA webhook
@@ -205,12 +225,11 @@ Configured in **Settings → Retention** or directly in the database:
 ## Updating
 
 ```bash
-git pull
-docker compose build
+docker compose pull
 docker compose up -d
 ```
 
-Model weights in `./models` are preserved across rebuilds.
+Model weights in `./models` are preserved across image updates.
 
 ---
 

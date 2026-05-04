@@ -1,0 +1,9 @@
+# Local STT dependencies — IBM Granite 4.0 1B Speech via HuggingFace transformers.
+# torch and torchaudio are installed separately in the Dockerfile from the CUDA wheel
+# index before this file, so they are intentionally omitted here.
+#
+# Install only when building with ENABLE_LOCAL_STT=true.
+# See Dockerfile and docs for the remote STT alternative.
+transformers>=4.45.0
+huggingface_hub>=0.24.0
+accelerate>=0.33.0

@@ -1,5 +1,9 @@
 FROM python:3.12-slim
 
+# Set to "true" to include IBM Granite local STT (requires CUDA 12.8+ at runtime).
+# Leave as "false" (default) for a smaller image that uses a remote STT endpoint instead.
+ARG ENABLE_LOCAL_STT=false
+
 # System libraries required by audio processing and model inference
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1 \
@@ -9,22 +13,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# ── Step 1: install PyTorch + torchaudio (CUDA 12.8) ─────────────────
-# torch is required by Granite STT (transformers).
-# torchaudio must be installed here from the CUDA index — wespeakerruntime
-# lists it as a dependency and pip would otherwise install the CPU build
-# from PyPI, which is ABI-incompatible with the CUDA torch above.
-# Requires CUDA 12.8+ on the host and nvidia-container-toolkit.
-# For CPU-only, replace the index URL with https://download.pytorch.org/whl/cpu
-COPY requirements.txt .
-RUN pip install --no-cache-dir --timeout 300 \
-    --index-url https://download.pytorch.org/whl/cu128 \
-    "torch>=2.7.0" "torchaudio>=2.7.0"
+COPY requirements.txt requirements-local-stt.txt ./
 
-# ── Step 2: install the remaining requirements ─────────────────────────
+# ── Base dependencies (no torch) ───────────────────────────────────
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ── Application source ─────────────────────────────────────────────────
+# ── Local STT: PyTorch (CUDA 12.8) + transformers ──────────────────
+# Skipped in the default slim build. Requires nvidia-container-toolkit
+# and a CUDA 12.8-capable GPU on the host at runtime.
+RUN if [ "$ENABLE_LOCAL_STT" = "true" ]; then \
+        pip install --no-cache-dir --timeout 300 \
+            --index-url https://download.pytorch.org/whl/cu128 \
+            "torch>=2.7.0" "torchaudio>=2.7.0" && \
+        pip install --no-cache-dir -r requirements-local-stt.txt; \
+    fi
+
+# ── Application source ─────────────────────────────────────────────
 COPY pipeline/ ./pipeline/
 COPY api/      ./api/
 COPY ui/       ./ui/
@@ -33,7 +37,7 @@ COPY ui/       ./ui/
 # before the bind mounts are attached (plain docker run without compose).
 RUN mkdir -p /data/audio /data/embeddings /models
 
-# ── Environment defaults (all overridable at runtime) ──────────────────
+# ── Environment defaults (all overridable at runtime) ──────────────
 ENV DB_PATH=/data/speaker.db \
     AUDIO_DIR=/data/audio \
     EMBEDDING_DIR=/data/embeddings \
