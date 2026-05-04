@@ -614,6 +614,10 @@ body {
   outline: 2px solid var(--clr-primary);
   border-color: transparent;
 }
+.setting-input--wide {
+  width: 100%;
+  max-width: 420px;
+}
 
 .setting-hint {
   font-size: .78rem;

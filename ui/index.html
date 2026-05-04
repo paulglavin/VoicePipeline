@@ -108,6 +108,58 @@
           </div>
 
         </form>
+
+        <form id="model-settings-form" class="settings-form" novalidate>
+
+          <h2>Speech Recognition</h2>
+
+          <div class="setting-row">
+            <label for="s-stt-provider">Provider</label>
+            <select class="setting-input" id="s-stt-provider">
+              <option value="local">Local (HuggingFace)</option>
+              <option value="openai_compatible">Remote (OpenAI-compatible)</option>
+            </select>
+            <p class="setting-hint">Local loads the model on this machine. Remote calls an OpenAI-compatible /v1/audio/transcriptions endpoint, e.g. Ollama on a separate GPU machine.</p>
+          </div>
+
+          <div class="setting-row" id="stt-model-row">
+            <label for="s-stt-model">Model</label>
+            <input class="setting-input setting-input--wide" id="s-stt-model" type="text" placeholder="ibm-granite/granite-4.0-1b-speech">
+            <p class="setting-hint" id="stt-model-hint-local">HuggingFace model ID. Downloaded on first use and cached in the models volume.</p>
+            <p class="setting-hint" id="stt-model-hint-remote" hidden>Model name as known to the remote server (e.g. <em>gemma4</em>, <em>whisper-large-v3</em>).</p>
+          </div>
+
+          <div class="setting-row" id="stt-remote-section" hidden>
+            <label for="s-stt-base-url">API base URL</label>
+            <input class="setting-input setting-input--wide" id="s-stt-base-url" type="text" placeholder="http://bigbox:11434/v1">
+            <p class="setting-hint">Base URL of the remote server, ending in <em>/v1</em>.</p>
+          </div>
+
+          <div class="setting-row" id="stt-apikey-section" hidden>
+            <label for="s-stt-api-key">API key</label>
+            <input class="setting-input setting-input--wide" id="s-stt-api-key" type="password" placeholder="Leave blank if not required">
+          </div>
+
+          <div class="setting-row">
+            <label for="s-stt-prompt">Transcription prompt</label>
+            <input class="setting-input setting-input--wide" id="s-stt-prompt" type="text">
+            <p class="setting-hint">Instruction passed to the model. The default is tuned for Granite. Leave blank or adjust for other models.</p>
+          </div>
+
+          <h2>Speaker Identification</h2>
+
+          <div class="setting-row">
+            <label for="s-sid-model">WeSpeaker model file</label>
+            <input class="setting-input setting-input--wide" id="s-sid-model" type="text" placeholder="voxceleb_resnet34_LM.onnx">
+            <p class="setting-hint">ONNX filename in the wespeaker cache directory. The default VoxCeleb ResNet34 model is downloaded automatically on first use.</p>
+          </div>
+
+          <div class="settings-actions">
+            <button class="btn btn--primary" type="submit" id="model-save-btn">Save &amp; reload models</button>
+            <span class="settings-saved" id="model-settings-saved" hidden>Reloading…</span>
+          </div>
+
+        </form>
       </div>
     </section>
 

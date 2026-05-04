@@ -112,6 +112,12 @@ INSERT OR IGNORE INTO settings VALUES ('confirm_threshold',            '0.75');
 INSERT OR IGNORE INTO settings VALUES ('personality_processing',       'false');
 INSERT OR IGNORE INTO settings VALUES ('ha_base_url',                  '');
 INSERT OR IGNORE INTO settings VALUES ('ha_webhook_enabled',           'false');
+INSERT OR IGNORE INTO settings VALUES ('stt_provider',                 'local');
+INSERT OR IGNORE INTO settings VALUES ('stt_model',                    'ibm-granite/granite-4.0-1b-speech');
+INSERT OR IGNORE INTO settings VALUES ('stt_base_url',                 '');
+INSERT OR IGNORE INTO settings VALUES ('stt_api_key',                  '');
+INSERT OR IGNORE INTO settings VALUES ('stt_prompt',                   '<|audio|>can you transcribe the speech into a written format?');
+INSERT OR IGNORE INTO settings VALUES ('speaker_id_model',             'voxceleb_resnet34_LM.onnx');
 """
 
 
@@ -128,6 +134,12 @@ def init(db_path: str) -> None:
         # that won't re-execute the full schema).
         conn.execute("INSERT OR IGNORE INTO settings VALUES ('ha_base_url', '')")
         conn.execute("INSERT OR IGNORE INTO settings VALUES ('ha_webhook_enabled', 'false')")
+        conn.execute("INSERT OR IGNORE INTO settings VALUES ('stt_provider', 'local')")
+        conn.execute("INSERT OR IGNORE INTO settings VALUES ('stt_model', 'ibm-granite/granite-4.0-1b-speech')")
+        conn.execute("INSERT OR IGNORE INTO settings VALUES ('stt_base_url', '')")
+        conn.execute("INSERT OR IGNORE INTO settings VALUES ('stt_api_key', '')")
+        conn.execute("INSERT OR IGNORE INTO settings VALUES ('stt_prompt', '<|audio|>can you transcribe the speech into a written format?')")
+        conn.execute("INSERT OR IGNORE INTO settings VALUES ('speaker_id_model', 'voxceleb_resnet34_LM.onnx')")
         conn.commit()
 
         for migration in (

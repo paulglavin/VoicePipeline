@@ -79,7 +79,12 @@ class SpeakerIdentifier:
     identify() returns (speaker_name | None, cosine_similarity | None, embedding | None).
     """
 
-    def __init__(self, model_dir: str, db_path: str) -> None:
+    def __init__(
+        self,
+        model_dir: str,
+        db_path: str,
+        model_filename: str = "voxceleb_resnet34_LM.onnx",
+    ) -> None:
         self._db_path  = db_path
         self._speaker  = None
         self._cache:   dict[str, np.ndarray] = {}
@@ -102,7 +107,7 @@ class SpeakerIdentifier:
 
             # wespeakerruntime downloads its model on the first call if the
             # onnx_path does not yet exist; subsequent starts load from disk.
-            onnx_path = model_dir_path / "voxceleb_resnet34_LM.onnx"
+            onnx_path = model_dir_path / model_filename
             if onnx_path.exists():
                 self._speaker = wespeaker.Speaker(
                     lang="en", onnx_path=str(onnx_path)

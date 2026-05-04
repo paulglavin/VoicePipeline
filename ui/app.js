@@ -734,6 +734,89 @@ document.getElementById('settings-form').addEventListener('submit', async e => {
 });
 
 /* ---------------------------------------------------------------------------
+   Model settings tab
+   --------------------------------------------------------------------------- */
+
+function _updateSttProviderUI(provider) {
+  const isRemote = provider === 'openai_compatible';
+  document.getElementById('stt-remote-section').hidden  = !isRemote;
+  document.getElementById('stt-apikey-section').hidden  = !isRemote;
+  document.getElementById('stt-model-hint-local').hidden  = isRemote;
+  document.getElementById('stt-model-hint-remote').hidden = !isRemote;
+}
+
+document.getElementById('s-stt-provider').addEventListener('change', e => {
+  _updateSttProviderUI(e.target.value);
+});
+
+async function loadModelSettings() {
+  try {
+    const s = await apiFetch('/settings/models');
+    document.getElementById('s-stt-provider').value  = s.stt_provider;
+    document.getElementById('s-stt-model').value     = s.stt_model;
+    document.getElementById('s-stt-base-url').value  = s.stt_base_url;
+    document.getElementById('s-stt-api-key').value   = s.stt_api_key;
+    document.getElementById('s-stt-prompt').value    = s.stt_prompt;
+    document.getElementById('s-sid-model').value     = s.speaker_id_model;
+    _updateSttProviderUI(s.stt_provider);
+  } catch (err) {
+    showToast('Failed to load model settings: ' + err.message);
+  }
+}
+
+document.getElementById('model-settings-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn = document.getElementById('model-save-btn');
+  const saved = document.getElementById('model-settings-saved');
+  btn.disabled = true;
+
+  try {
+    await apiFetch('/settings/models', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        stt_provider:    document.getElementById('s-stt-provider').value,
+        stt_model:       document.getElementById('s-stt-model').value.trim(),
+        stt_base_url:    document.getElementById('s-stt-base-url').value.trim(),
+        stt_api_key:     document.getElementById('s-stt-api-key').value.trim(),
+        stt_prompt:      document.getElementById('s-stt-prompt').value.trim(),
+        speaker_id_model: document.getElementById('s-sid-model').value.trim(),
+      }),
+    });
+
+    await apiFetch('/models/reload', { method: 'POST' });
+
+    saved.hidden = false;
+    saved.textContent = 'Reloading…';
+
+    // Poll until ready or error
+    const poll = setInterval(async () => {
+      try {
+        const status = await apiFetch('/models/status');
+        if (status.status === 'ready') {
+          clearInterval(poll);
+          saved.textContent = 'Models reloaded.';
+          setTimeout(() => { saved.hidden = true; }, 3000);
+          btn.disabled = false;
+        } else if (status.status === 'error') {
+          clearInterval(poll);
+          saved.hidden = true;
+          showToast('Model reload failed: ' + (status.detail || 'unknown error'));
+          btn.disabled = false;
+        }
+      } catch {
+        clearInterval(poll);
+        btn.disabled = false;
+      }
+    }, 2000);
+
+  } catch (err) {
+    showToast('Failed to save model settings: ' + err.message);
+    btn.disabled = false;
+  }
+});
+
+/* ---------------------------------------------------------------------------
    Formatting helpers
    --------------------------------------------------------------------------- */
 
@@ -762,7 +845,7 @@ const tabLoaders = {
   pending:  loadPending,
   speakers: loadSpeakers,
   history:  loadHistory,
-  settings: loadSettings,
+  settings: () => { loadSettings(); loadModelSettings(); },
 };
 
 document.querySelectorAll('.tab-btn').forEach(btn => {

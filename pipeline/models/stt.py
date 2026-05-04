@@ -1,43 +1,66 @@
 """
-stt.py — IBM Granite 4.0 1B Speech STT wrapper.
+stt.py — Speech-to-text: local HuggingFace or remote OpenAI-compatible.
 
-Model: ibm-granite/granite-4.0-1b-speech (HuggingFace)
-Downloaded on first run; cached in MODEL_DIR/granite_stt/.
-
-Granite 4.0 Speech is a multimodal LLM — the processor requires a chat-
-templated text prompt alongside the audio tensor. The <|audio|> token in
-the prompt is where audio features are injected. Output decoding strips the
-input tokens so we only decode the newly generated text.
+Local provider: loads the configured HuggingFace model on-device.
+Remote provider: calls /v1/audio/transcriptions on an OpenAI-compatible endpoint,
+                 e.g. Ollama running on a separate GPU machine.
 
 transcribe() is synchronous and blocking — call via asyncio.to_thread.
 """
 
+import io
 import logging
+import wave
 from pathlib import Path
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
-_SR       = 16_000
-_MODEL_ID = "ibm-granite/granite-4.0-1b-speech"
-_PROMPT   = "<|audio|>can you transcribe the speech into a written format?"
+_SR                  = 16_000
+_LOCAL_MODEL_DEFAULT = "ibm-granite/granite-4.0-1b-speech"
+_PROMPT_DEFAULT      = "<|audio|>can you transcribe the speech into a written format?"
 
 
 class SpeechToText:
     """
-    Transcribes 16-bit LE PCM audio to text using Granite 4.0 1B Speech.
+    Speech-to-text wrapper. Delegates to _LocalSTT or _RemoteSTT based on provider.
 
     Falls back to an empty string on any error — the orchestrator treats
     an empty transcript as "no utterance" and discards the interaction.
     """
 
-    def __init__(self, model_dir: str) -> None:
+    def __init__(
+        self,
+        model_dir: str,
+        provider: str = "local",
+        model_id: str = _LOCAL_MODEL_DEFAULT,
+        base_url: str = "",
+        api_key: str = "",
+        prompt: str = _PROMPT_DEFAULT,
+    ) -> None:
+        if provider == "openai_compatible" and base_url:
+            self._impl = _RemoteSTT(model_id, base_url, api_key, prompt)
+        else:
+            self._impl = _LocalSTT(model_dir, model_id, prompt)
+
+    @property
+    def available(self) -> bool:
+        return self._impl.available
+
+    def transcribe(self, pcm_bytes: bytes) -> str:
+        return self._impl.transcribe(pcm_bytes)
+
+
+class _LocalSTT:
+    """Local HuggingFace STT. Model ID is configurable — defaults to Granite 4.0 1B Speech."""
+
+    def __init__(self, model_dir: str, model_id: str, prompt: str) -> None:
         self._model     = None
         self._processor = None
         self._tokenizer = None
         self._device    = "cpu"
-        self._prompt    = None
+        self._prompt_t  = None
         cache_dir       = str(Path(model_dir) / "granite_stt")
 
         try:
@@ -48,18 +71,18 @@ class SpeechToText:
             self._device = "cuda" if cuda else "cpu"
 
             logger.info(
-                "Loading %s on %s — first run downloads ~2 GB",
-                _MODEL_ID, self._device,
+                "Loading %s on %s — first run downloads model weights",
+                model_id, self._device,
             )
 
             self._processor = AutoProcessor.from_pretrained(
-                _MODEL_ID,
+                model_id,
                 cache_dir=cache_dir,
                 trust_remote_code=True,
             )
             self._tokenizer = self._processor.tokenizer
             self._model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                _MODEL_ID,
+                model_id,
                 cache_dir=cache_dir,
                 trust_remote_code=True,
                 dtype=torch.bfloat16,
@@ -67,43 +90,33 @@ class SpeechToText:
             )
             self._model.eval()
 
-            # Pre-build the prompt once — apply_chat_template is pure text processing
-            chat = [{"role": "user", "content": _PROMPT}]
-            self._prompt = self._tokenizer.apply_chat_template(
+            chat = [{"role": "user", "content": prompt}]
+            self._prompt_t = self._tokenizer.apply_chat_template(
                 chat, tokenize=False, add_generation_prompt=True
             )
 
-            logger.info("Granite STT ready on %s", self._device)
+            logger.info("Local STT ready: %s on %s", model_id, self._device)
 
         except Exception as exc:
-            logger.warning(
-                "SpeechToText init failed (%s) — transcription unavailable", exc
-            )
+            logger.warning("Local STT init failed (%s) — transcription unavailable", exc)
 
     @property
     def available(self) -> bool:
         return self._model is not None and self._processor is not None
 
-    # ------------------------------------------------------------------
-
     def transcribe(self, pcm_bytes: bytes) -> str:
-        """
-        Transcribe raw 16-bit LE PCM at 16 kHz mono.
-        Returns a stripped transcript string, or "" on failure.
-        """
         if not self.available or not pcm_bytes:
             return ""
 
         try:
             import torch
 
-            # Convert PCM bytes → float32 tensor, shape [1, samples] (mono)
             wav = torch.from_numpy(
                 np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
             ).unsqueeze(0)
 
             inputs = self._processor(
-                self._prompt,
+                self._prompt_t,
                 wav,
                 device=self._device,
                 return_tensors="pt",
@@ -131,4 +144,67 @@ class SpeechToText:
 
         except Exception as exc:
             logger.warning("Transcription error: %s", exc)
+            return ""
+
+
+class _RemoteSTT:
+    """Remote STT via OpenAI-compatible /v1/audio/transcriptions endpoint."""
+
+    def __init__(self, model_id: str, base_url: str, api_key: str, prompt: str) -> None:
+        self._model_id = model_id
+        self._base_url = base_url.rstrip("/")
+        self._api_key  = api_key
+        # Granite-specific tokens aren't meaningful to a remote model
+        self._prompt   = prompt if not prompt.startswith("<|") else ""
+        self._available = False
+
+        try:
+            import httpx  # noqa: F401
+            self._available = True
+            logger.info("Remote STT configured: %s at %s", model_id, self._base_url)
+        except ImportError:
+            logger.warning("Remote STT requires httpx — pip install httpx")
+
+    @property
+    def available(self) -> bool:
+        return self._available
+
+    def transcribe(self, pcm_bytes: bytes) -> str:
+        if not self._available or not pcm_bytes:
+            return ""
+
+        try:
+            import httpx
+
+            wav_buf = io.BytesIO()
+            with wave.open(wav_buf, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(_SR)
+                wf.writeframes(pcm_bytes)
+            wav_buf.seek(0)
+
+            headers = {}
+            if self._api_key:
+                headers["Authorization"] = f"Bearer {self._api_key}"
+
+            data = {"model": self._model_id}
+            if self._prompt:
+                data["prompt"] = self._prompt
+
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(
+                    f"{self._base_url}/audio/transcriptions",
+                    headers=headers,
+                    data=data,
+                    files={"file": ("audio.wav", wav_buf, "audio/wav")},
+                )
+                response.raise_for_status()
+
+            text = response.json().get("text", "").strip()
+            logger.debug("Remote STT: %r", text)
+            return text
+
+        except Exception as exc:
+            logger.warning("Remote STT error: %s", exc)
             return ""

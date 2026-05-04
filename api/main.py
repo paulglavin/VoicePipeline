@@ -128,6 +128,29 @@ class SettingsUpdate(BaseModel):
     ha_webhook_enabled: bool | None = None
 
 
+class ModelSettingsResponse(BaseModel):
+    stt_provider: str
+    stt_model: str
+    stt_base_url: str
+    stt_api_key: str
+    stt_prompt: str
+    speaker_id_model: str
+
+
+class ModelSettingsUpdate(BaseModel):
+    stt_provider: str | None = None
+    stt_model: str | None = None
+    stt_base_url: str | None = None
+    stt_api_key: str | None = None
+    stt_prompt: str | None = None
+    speaker_id_model: str | None = None
+
+
+class ModelReloadStatus(BaseModel):
+    status: str   # "reloading" | "ready" | "error"
+    detail: str = ""
+
+
 # ---------------------------------------------------------------------------
 # Database helpers
 # ---------------------------------------------------------------------------
@@ -461,6 +484,17 @@ def _clear_speaker_clips(speaker_id: str) -> None:
         )
 
 
+def _model_settings_response(raw: dict[str, str]) -> ModelSettingsResponse:
+    return ModelSettingsResponse(
+        stt_provider=raw.get("stt_provider", "local"),
+        stt_model=raw.get("stt_model", "ibm-granite/granite-4.0-1b-speech"),
+        stt_base_url=raw.get("stt_base_url", ""),
+        stt_api_key=raw.get("stt_api_key", ""),
+        stt_prompt=raw.get("stt_prompt", "<|audio|>can you transcribe the speech into a written format?"),
+        speaker_id_model=raw.get("speaker_id_model", "voxceleb_resnet34_LM.onnx"),
+    )
+
+
 def _settings_response(raw: dict[str, str]) -> SettingsResponse:
     return SettingsResponse(
         pending_retention_days=int(raw.get("pending_retention_days", 7)),
@@ -484,13 +518,18 @@ async def lifespan(app: FastAPI):
     # ── DB init (idempotent) ────────────────────────────────────────────
     await asyncio.to_thread(init_db, DB_PATH)
 
+    # ── Read model settings from DB ─────────────────────────────────────
+    raw_settings = await asyncio.to_thread(_fetch_settings)
+    ms = _model_settings_response(raw_settings)
+
     # ── Load ML models in parallel (each handles its own download/cache) ─
     logger.info("Loading pipeline models — first run may download several GB…")
     ns, vad, sid, stt = await asyncio.gather(
         asyncio.to_thread(NoiseSuppressor,       MODEL_DIR),
         asyncio.to_thread(VoiceActivityDetector, MODEL_DIR),
-        asyncio.to_thread(SpeakerIdentifier,     MODEL_DIR, DB_PATH),
-        asyncio.to_thread(SpeechToText,          MODEL_DIR),
+        asyncio.to_thread(SpeakerIdentifier,     MODEL_DIR, DB_PATH, ms.speaker_id_model),
+        asyncio.to_thread(SpeechToText,          MODEL_DIR, ms.stt_provider,
+                          ms.stt_model, ms.stt_base_url, ms.stt_api_key, ms.stt_prompt),
     )
     logger.info(
         "Models ready — noise_suppressor=%s  vad=%s  speaker_id=%s  stt=%s",
@@ -501,7 +540,9 @@ async def lifespan(app: FastAPI):
     writer       = InteractionWriter(db_path=DB_PATH, audio_dir=AUDIO_DIR,
                                      embedding_dir=EMBEDDING_DIR)
     orchestrator = VoicePipelineOrchestrator(ns, vad, sid, stt, writer)
-    app.state.sid = sid
+    app.state.sid         = sid
+    app.state.orchestrator = orchestrator
+    app.state.model_status = {"status": "ready"}
 
     # ── HA webhook notifier ─────────────────────────────────────────────
     notifier = WebhookNotifier(db_path=DB_PATH)
@@ -659,6 +700,57 @@ async def update_settings(body: SettingsUpdate):
     else:
         raw = await asyncio.to_thread(_save_settings, updates)
     return _settings_response(raw)
+
+
+@api.get("/settings/models", response_model=ModelSettingsResponse)
+async def get_model_settings():
+    raw = await asyncio.to_thread(_fetch_settings)
+    return _model_settings_response(raw)
+
+
+@api.put("/settings/models", response_model=ModelSettingsResponse)
+async def update_model_settings(body: ModelSettingsUpdate):
+    updates = body.model_dump(exclude_none=True)
+    if updates:
+        await asyncio.to_thread(_save_settings, updates)
+    raw = await asyncio.to_thread(_fetch_settings)
+    return _model_settings_response(raw)
+
+
+@api.post("/models/reload", response_model=ModelReloadStatus)
+async def reload_models(request: Request):
+    """Re-initialise STT and speaker ID models from current settings. Runs in background."""
+    if request.app.state.model_status.get("status") == "reloading":
+        return ModelReloadStatus(status="reloading", detail="Reload already in progress")
+
+    request.app.state.model_status = {"status": "reloading"}
+
+    async def _do_reload():
+        try:
+            raw = await asyncio.to_thread(_fetch_settings)
+            ms  = _model_settings_response(raw)
+            new_stt, new_sid = await asyncio.gather(
+                asyncio.to_thread(SpeechToText, MODEL_DIR, ms.stt_provider,
+                                  ms.stt_model, ms.stt_base_url, ms.stt_api_key, ms.stt_prompt),
+                asyncio.to_thread(SpeakerIdentifier, MODEL_DIR, DB_PATH, ms.speaker_id_model),
+            )
+            request.app.state.orchestrator.swap_stt(new_stt)
+            request.app.state.orchestrator.swap_sid(new_sid)
+            request.app.state.sid = new_sid
+            request.app.state.model_status = {"status": "ready"}
+            logger.info("Model reload complete — stt=%s  sid=%s", new_stt.available, new_sid.available)
+        except Exception as exc:
+            logger.error("Model reload failed: %s", exc)
+            request.app.state.model_status = {"status": "error", "detail": str(exc)}
+
+    asyncio.create_task(_do_reload())
+    return ModelReloadStatus(status="reloading", detail="Reload started")
+
+
+@api.get("/models/status", response_model=ModelReloadStatus)
+async def get_model_status(request: Request):
+    s = request.app.state.model_status
+    return ModelReloadStatus(status=s.get("status", "ready"), detail=s.get("detail", ""))
 
 
 app.include_router(api)

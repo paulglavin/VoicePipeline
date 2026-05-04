@@ -61,6 +61,12 @@ class VoicePipelineOrchestrator:
         self._stt    = stt
         self._writer = writer
 
+    def swap_stt(self, stt: SpeechToText) -> None:
+        self._stt = stt
+
+    def swap_sid(self, sid: SpeakerIdentifier) -> None:
+        self._sid = sid
+
     async def process(self, raw_pcm: bytes) -> PipelineResult | None:
         """
         Run the full pipeline on a single utterance.
