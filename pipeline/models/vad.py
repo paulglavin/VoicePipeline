@@ -88,11 +88,27 @@ class VoiceActivityDetector:
         Returns (speech_pcm_bytes, vad_confidence).
         speech_pcm_bytes is empty bytes if no speech detected.
         """
+        segments, conf = self.extract_segments(pcm_bytes)
+        return self.apply_segments(pcm_bytes, segments), conf
+
+    def extract_segments(
+        self, pcm_bytes: bytes
+    ) -> tuple[list[tuple[int, int]], float]:
+        """
+        Compute VAD segment boundaries without slicing.
+
+        Returns (segments, confidence) where segments is a list of
+        (start_sample, end_sample) pairs into the original PCM buffer.
+        Transferable to any PCM buffer of the same sample length —
+        used to apply clean-audio VAD boundaries to raw audio.
+        """
         if not pcm_bytes:
-            return b"", 0.0
+            return [], 0.0
+
+        n_samples = len(pcm_bytes) // 2  # 16-bit = 2 bytes per sample
 
         if self._model is None:
-            return pcm_bytes, 1.0
+            return [(0, n_samples)], 1.0
 
         try:
             audio = (
@@ -101,23 +117,20 @@ class VoiceActivityDetector:
             )
             n = len(audio)
 
-            # Pad to a multiple of _CHUNK so every chunk is full-length
             remainder = n % _CHUNK
             if remainder:
                 audio = np.concatenate(
                     [audio, np.zeros(_CHUNK - remainder, dtype=np.float32)]
                 )
 
-            # OnnxWrapper manages its own LSTM state — reset for each utterance
             self._model.reset_states()
             probs: list[float] = []
 
             for i in range(0, len(audio), _CHUNK):
-                chunk = torch.from_numpy(audio[i : i + _CHUNK]).unsqueeze(0)  # (1, chunk)
+                chunk = torch.from_numpy(audio[i : i + _CHUNK]).unsqueeze(0)
                 prob  = self._model(chunk, sr=_SR)
                 probs.append(float(prob))
 
-            # Collect speech segments from per-chunk probabilities
             segments = _find_segments(
                 probs, _CHUNK, n, _THRESHOLD,
                 _MIN_SPEECH_MS, _PADDING_MS, _SR,
@@ -125,27 +138,39 @@ class VoiceActivityDetector:
 
             if not segments:
                 logger.debug("VAD: no speech detected")
-                return b"", 0.0
+                return [], 0.0
 
-            # Trim audio back to original length before slicing
-            audio = audio[:n]
-
-            parts: list[np.ndarray] = []
-            speech_samples = 0
-            for start, end in segments:
-                parts.append(audio[start:end])
-                speech_samples += end - start
-
-            speech   = np.concatenate(parts)
-            conf     = min(float(speech_samples) / max(n, 1), 1.0)
-            out_i16  = (speech * 32767.0).clip(-32768, 32767).astype(np.int16)
+            speech_samples = sum(end - start for start, end in segments)
+            conf = min(float(speech_samples) / max(n, 1), 1.0)
 
             logger.debug("VAD: %d segment(s), confidence=%.2f", len(segments), conf)
-            return out_i16.tobytes(), conf
+            return segments, conf
 
         except Exception as exc:
             logger.warning("VAD error (%s) — passthrough", exc)
-            return pcm_bytes, 0.5
+            return [(0, n_samples)], 0.5
+
+    def apply_segments(
+        self, pcm_bytes: bytes, segments: list[tuple[int, int]]
+    ) -> bytes:
+        """
+        Slice a PCM buffer using pre-computed segment boundaries and concatenate.
+
+        Segments must have been derived from a buffer of the same sample length.
+        Returns empty bytes if segments is empty.
+        """
+        if not segments or not pcm_bytes:
+            return b""
+
+        audio = (
+            np.frombuffer(pcm_bytes, dtype=np.int16)
+            .astype(np.float32) / 32768.0
+        )
+        n = len(audio)
+
+        parts = [audio[max(0, s) : min(n, e)] for s, e in segments]
+        speech = np.concatenate(parts)
+        return (speech * 32767.0).clip(-32768, 32767).astype(np.int16).tobytes()
 
 
 # ---------------------------------------------------------------------------

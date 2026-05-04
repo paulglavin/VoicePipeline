@@ -1,126 +1,168 @@
 # VoicePipeline
 
-A self-hosted voice pipeline for Home Assistant with speaker identification and a management UI.
+A self-hosted voice pipeline for Home Assistant that adds speaker identification to your Assist setup — so your assistant knows who's talking and can respond accordingly.
 
-## Architecture
+Audio from Home Assistant travels through a four-stage ML pipeline: noise suppression → voice activity detection → speaker identification → speech-to-text. Every utterance is stored locally, and a management UI lets you review low-confidence detections and enrol household members.
 
-Home Assistant sends audio via the Wyoming protocol to a local STT service that runs four models in sequence:
+Designed to work alongside the [Personality LLM](https://github.com/Paul-Glavin/personality_llm) Home Assistant integration, which uses speaker identity to deliver per-person personality and tone.
+
+---
+
+## How it fits into your HA setup
 
 ```
-HA Wyoming client
-      ↓ TCP :10300
-DTLN ONNX — noise suppression (wet/dry blend, bypassable via DTLN_MIX=0)
-      ↓
-SileroVAD v5 ONNX — voice activity detection (gates everything downstream)
-      ↓
-WeSpeaker ECAPA-TDNN ONNX — speaker identification (192-dim cosine similarity)
-      ↓
-Granite 4.0 1B Speech — speech-to-text (IBM, gated HuggingFace model)
-      ↓
-SQLite (WAL mode) — interaction log + speaker profiles
-      ↓
-Management UI — :8000
+Microphone → Home Assistant Assist pipeline
+                    ↓ Wyoming protocol (TCP :10300)
+             VoicePipeline
+                    ↓ identifies speaker
+             fires webhook → Personality LLM (HA integration)
+                    ↓ routes to correct user profile
+             personalised response spoken back
 ```
 
-Every utterance is written to a local SQLite database. Low-confidence or unknown-speaker interactions are queued for manual review in the UI.
-
-### Model implementation notes
-
-- **DTLN** — ONNX Runtime, two-stage model, wet/dry blend controlled by `DTLN_MIX`
-- **SileroVAD** — uses the `silero-vad` pip package's bundled ONNX and its `OnnxWrapper` class for state management; no runtime download required
-- **WeSpeaker** — uses `wespeakerruntime` (ONNX backend); internally calls `torchaudio.load()` which is monkey-patched at startup to use `soundfile` to avoid a `torchcodec` dependency in torchaudio 2.7+
-- **Granite STT** — `transformers` / PyTorch backend; CUDA 12.8 build required for RTX 50-series (Blackwell); no viable ONNX migration path at time of writing
+Without Personality LLM, VoicePipeline still works as a standard Wyoming STT provider — it just won't route personality per speaker.
 
 ---
 
 ## Requirements
 
 - Docker + Docker Compose
-- nvidia-container-toolkit (GPU used for Granite STT)
-- ~3 GB free disk space for the `./models` bind mount (weights downloaded/copied on first run)
-- Ports 8000 (UI/API) and 10300 (Wyoming) available on the host
+- NVIDIA GPU with `nvidia-container-toolkit` installed (used for local STT)
+  - Not required if using a [remote STT endpoint](#configuring-models)
+- ~3 GB free disk space for model weights (downloaded on first run)
+- Ports `8000` (management UI) and `10300` (Wyoming) available on the host
 
 ---
 
-## Deployment
+## Installation
 
-### First time
-
-Clone the repo and build the image:
+### 1. Clone and configure
 
 ```bash
-git clone <repo-url> VoicePipeline
+git clone https://github.com/Paul-Glavin/VoicePipeline
 cd VoicePipeline
-cp .env.example .env          # or create .env manually — see HuggingFace token section
-docker compose build
-docker compose up -d
+cp .env.example .env
 ```
 
-> **Portainer users**: use the manual `docker compose build` step above rather than Portainer's built-in build — large CUDA wheel downloads can time out in Portainer's build runner.
-
-First boot downloads and caches model weights to `./models` on the host:
-
-| Model | Size | Source |
-|-------|------|--------|
-| DTLN ONNX (×2) | ~1.6 MB | GitHub (downloaded by pipeline at startup) |
-| SileroVAD ONNX | ~2 MB | Copied from `silero-vad` pip package (no network required) |
-| WeSpeaker ECAPA-TDNN | ~50 MB | Downloaded by `wespeakerruntime` on first call |
-| Granite 4.0 1B Speech | ~2 GB | HuggingFace (requires `HF_TOKEN`) |
-
-The healthcheck has a 180-second start window to account for first-run downloads. Subsequent starts are fast because `./models` is a host bind mount that survives rebuilds and `docker compose down -v`.
-
-### Subsequent deploys
-
-```bash
-git pull
-docker compose build
-docker compose up -d
-```
-
-### HuggingFace token
-
-`ibm-granite/granite-4.0-1b-speech` is a gated model. Create a `.env` file alongside `docker-compose.yml` before the first run:
+Edit `.env` and add your HuggingFace token (required for the default Granite STT model):
 
 ```
 HF_TOKEN=hf_your_token_here
 ```
 
----
+> If you plan to use a **remote STT endpoint** instead of the local Granite model, you can skip the HuggingFace token — configure the remote endpoint in the management UI after first boot.
 
-## Home Assistant integration
+### 2. Build and start
 
-1. In HA: **Settings → Devices & Services → Add Integration → Wyoming Protocol**
+```bash
+docker compose build
+docker compose up -d
+```
+
+> **Portainer users**: run `docker compose build` manually before using Portainer to start the container. Large CUDA wheel downloads can time out in Portainer's build runner.
+
+First boot downloads model weights to `./models`:
+
+| Model | Size | Notes |
+|-------|------|-------|
+| DTLN ONNX (×2) | ~2 MB | Noise suppressor — downloaded from GitHub |
+| SileroVAD ONNX | ~2 MB | VAD — copied from pip package, no download |
+| WeSpeaker ECAPA-TDNN | ~50 MB | Speaker ID — downloaded by wespeakerruntime |
+| Granite 4.0 1B Speech | ~2 GB | STT — requires `HF_TOKEN`, downloaded from HuggingFace |
+
+The container's healthcheck allows 180 seconds for first-run downloads. Subsequent starts are fast — `./models` is a host bind mount that survives rebuilds.
+
+### 3. Add the Wyoming integration in Home Assistant
+
+1. **Settings → Devices & Services → Add Integration → Wyoming Protocol**
 2. Host: your server's IP address
 3. Port: `10300`
 
-HA will use this as a speech-to-text provider in your assist pipeline.
+HA will now use VoicePipeline as its speech-to-text provider.
 
 ---
 
 ## Enrolling speakers
 
-There is no pre-seeded speaker data. The bootstrap workflow is:
+There is no pre-seeded speaker data. The first-time workflow is:
 
-1. Speak to Home Assistant — the interaction appears in the **Pending** tab as _Unknown speaker_
-2. Click **Other match → Enrol as new speaker…** and type the person's name
-3. Repeat until each household member has been enrolled
+1. Speak to Home Assistant — the utterance appears in the **Pending** tab as _Unknown speaker_
+2. Click **Other match → Enrol as new speaker…** and enter the person's name
+3. Repeat for each household member until everyone is enrolled
 
-Once a speaker has enough high-confidence interactions (≥0.85), their reference clips rotate automatically and identification improves over time.
+Once a speaker has accumulated enough high-confidence interactions (≥0.85 similarity), their reference clips rotate automatically and identification improves over time.
 
-> **After a container rebuild**: if the speaker ID model has been updated, existing reference clips are not compatible with the new embedding space. Use **Clear clips** in the Enrolled Speakers tab and re-enrol.
+Open the management UI at `http://<your-server-ip>:8000`.
+
+> **After a container rebuild involving a speaker ID model change**: existing embeddings are not compatible with a different model's embedding space. Use **Clear clips** in the Enrolled Speakers tab and re-enrol each speaker.
 
 ---
 
 ## Management UI
 
-Open `http://<host>:8000` in a browser.
+`http://<host>:8000`
 
 | Tab | Purpose |
 |-----|---------|
-| **Pending** | Review unrecognised or low-confidence interactions. Confirm, reject, assign to a different speaker, or enrol a new one. |
-| **Enrolled Speakers** | Stats per speaker: interaction count, average confidence, reference clip count, last active. Delete a speaker or clear their reference clips. |
-| **History** | Full interaction log, filterable by speaker and date range. |
-| **Settings** | Retention policy, speaker matching thresholds, and Home Assistant integration options. |
+| **Pending** | Review unknown or low-confidence interactions. Confirm, reject, assign to a different speaker, or enrol a new one. |
+| **Enrolled Speakers** | Stats per speaker — interaction count, average confidence, reference clip count, last active. Delete a speaker or clear their clips. |
+| **History** | Full interaction log, filterable by speaker and date range. Expandable rows show pipeline timings. |
+| **Settings** | Speaker matching thresholds, retention policy, Home Assistant webhook, and model configuration. |
+
+---
+
+## Configuring models
+
+The **Settings → Speech Recognition** and **Settings → Speaker Identification** sections let you change models without editing code or restarting the container.
+
+### STT: Local vs Remote
+
+| Provider | When to use |
+|----------|-------------|
+| **Local (HuggingFace)** | Default. Runs on-device; requires a GPU and `HF_TOKEN` for gated models. |
+| **Remote (OpenAI-compatible)** | Use when you have a separate GPU machine running Ollama or another OpenAI-compatible server. No local GPU required. |
+
+For remote STT:
+1. Select **Remote (OpenAI-compatible)** as the provider
+2. Set the **API base URL** (e.g. `http://bigbox:11434/v1` for Ollama)
+3. Enter the **model name** as known to that server
+4. Clear the **transcription prompt** field (the default is tuned for Granite and won't work on other models)
+5. Click **Save & reload models**
+
+### Speaker ID model
+
+The default WeSpeaker VoxCeleb ResNet34 model is downloaded automatically. To use a different ONNX model, place the file in the wespeaker directory inside your `./models` bind mount and enter the filename in the Speaker Identification settings.
+
+---
+
+## Personality LLM integration
+
+[Personality LLM](https://github.com/Paul-Glavin/personality_llm) is a Home Assistant custom integration that delivers per-speaker personality from a local LLM. VoicePipeline feeds it speaker identity via a webhook.
+
+### How it works
+
+After identifying a speaker, VoicePipeline fires a webhook to HA:
+
+```
+POST /api/webhook/personality_llm_input
+{
+  "speaker_id": "paul",
+  "confidence": 0.91,
+  "timestamp": "2026-05-04T09:00:00Z",
+  "interaction_id": "..."
+}
+```
+
+The Personality LLM integration caches this for 2 seconds. When the Wyoming transcript arrives a moment later, it reads the cached speaker identity and routes the conversation to that person's profile — adjusting personality style, humour level, and response format.
+
+### Configuration
+
+1. Install [Personality LLM](https://github.com/Paul-Glavin/personality_llm) via HACS
+2. In the Personality LLM options, enable **per-user personality** and create a profile for each speaker (use the same names you enrolled in VoicePipeline)
+3. In VoicePipeline **Settings → Home Assistant Integration**:
+   - Enable the HA webhook
+   - Enter your HA base URL and a long-lived access token
+4. Select the Personality LLM conversation agent in your HA Assist pipeline
 
 ---
 
@@ -131,11 +173,11 @@ Open `http://<host>:8000` in a browser.
 | `DB_PATH` | `/data/speaker.db` | SQLite database path |
 | `AUDIO_DIR` | `/data/audio` | WAV clip storage |
 | `EMBEDDING_DIR` | `/data/embeddings` | Speaker embedding cache |
-| `MODEL_DIR` | `/models` | ML model weight cache (bind-mounted to `./models`) |
+| `MODEL_DIR` | `/models` | ML model weight cache |
 | `WYOMING_HOST` | `0.0.0.0` | Wyoming server bind address |
 | `WYOMING_PORT` | `10300` | Wyoming server port |
-| `HF_TOKEN` | _(required)_ | HuggingFace token for gated Granite model |
-| `DTLN_MIX` | `0.5` | Noise suppression wet/dry blend. `1.0` = full suppression, `0.0` = bypass. Reduce if you hear artefacts (hiss/squelch) on clean audio. |
+| `HF_TOKEN` | _(required for local Granite STT)_ | HuggingFace token for gated models |
+| `DTLN_MIX` | `0.5` | Noise suppressor wet/dry blend. `1.0` = full, `0.0` = bypass. Reduce if you hear artefacts on clean audio. |
 
 ---
 
@@ -143,38 +185,39 @@ Open `http://<host>:8000` in a browser.
 
 | Mount | Contents |
 |-------|---------|
-| `./data` (bind mount) | Database, audio clips, embeddings — **back this up** |
-| `./models` (bind mount) | Downloaded model weights — can be deleted and re-downloaded; survives `docker compose down -v` |
+| `./data` | Database, audio clips, embeddings — **back this up** |
+| `./models` | Downloaded model weights — can be deleted and re-downloaded |
 
 ---
 
 ## Retention
 
-Configured in the **Settings** tab or directly in the database:
+Configured in **Settings → Retention** or directly in the database:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `pending_retention_days` | 7 | Unresolved interactions purged after N days. `0` = never. |
-| `resolved_retention_days` | 3 | Audio files for resolved interactions deleted after N days. Metadata kept permanently. `-1` = keep forever. |
-| `reference_clips_per_speaker` | 5 | Maximum reference clips retained per speaker (oldest rotated out). |
+| Pending retention | 7 days | Unresolved interactions purged after N days. `0` = never. |
+| Resolved audio retention | 3 days | WAV files deleted after N days. Metadata kept permanently. `-1` = keep forever. |
+| Reference clips per speaker | 5 | Maximum clips per speaker — oldest rotated out first. |
 
 ---
 
-## Personality Engine (HA custom component)
+## Updating
 
-The optional [`ha_agent/`](ha_agent/README.md) component adds per-speaker personality to Home Assistant Assist. Rather than prefixing the transcript, it operates out-of-band:
+```bash
+git pull
+docker compose build
+docker compose up -d
+```
 
-1. VoicePipeline POSTs speaker identity to an HA webhook immediately after identification
-2. The Personality Engine conversation agent reads that cached identity when the Wyoming transcript arrives
-3. All utterances are routed through a per-speaker LLM — HA's built-in intent handler executes control commands, and the LLM generates a personality-flavoured spoken response regardless
-
-See [ha_agent/README.md](ha_agent/README.md) for installation and configuration.
+Model weights in `./models` are preserved across rebuilds.
 
 ---
 
-## Known limitations and future work
+## Known limitations
 
-- **Granite STT is PyTorch/CUDA only** — no ONNX migration path available yet; this is the main reason `torch` remains a dependency
-- **No authentication** — relies on network boundary (home LAN only); not suitable for internet-exposed deployments
-- **Speaker matching threshold is a blunt instrument** — a single global threshold (default 0.50) applies to all speakers; per-speaker thresholds would improve accuracy for household members with similar voice characteristics
-- **torchaudio 2.7 torchcodec workaround** — `wespeakerruntime` calls `torchaudio.load()` internally; torchaudio 2.7 routes this through `torchcodec` by default, which is unreliable in CUDA builds; the pipeline monkey-patches `torchaudio.load` with a `soundfile` implementation at startup
+- **No authentication** — intended for home LAN only; do not expose to the internet
+- **Single global match threshold** — one threshold applies to all speakers; household members with similar voices may need manual threshold tuning
+- **Local STT requires PyTorch/CUDA** — no ONNX path for Granite; use the remote STT option if you don't have a local GPU
+
+For implementation details see [docs/architecture.md](docs/architecture.md).

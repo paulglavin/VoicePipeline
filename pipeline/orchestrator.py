@@ -71,10 +71,14 @@ class VoicePipelineOrchestrator:
         """
         Run the full pipeline on a single utterance.
 
-        raw_pcm   — 16-bit LE PCM, 16 kHz, mono (from Wyoming AudioChunk stream)
+        raw_pcm — 16-bit LE PCM, 16 kHz, mono (from Wyoming AudioChunk stream)
 
         Returns PipelineResult on success, None if the utterance should be
         discarded (silence, empty transcript, or upstream error).
+
+        Stage 3 (speaker ID) runs on raw audio to preserve voice characteristics.
+        Stage 4 (STT) runs on DTLN-cleaned audio for transcription quality.
+        Stages 3 and 4 run in parallel — SID on CPU, STT on GPU.
         """
         if not raw_pcm:
             return None
@@ -95,50 +99,46 @@ class VoicePipelineOrchestrator:
         )
 
         # ── 2. Voice activity detection ─────────────────────────────────
+        # VAD runs on DTLN-cleaned audio for best probability estimates.
+        # The segment boundaries are then applied to the raw audio as well,
+        # so speaker ID receives unprocessed voice characteristics.
         t0 = time.monotonic()
         try:
-            speech_pcm, vad_conf = await asyncio.to_thread(self._vad.process, clean_pcm)
+            segments, vad_conf = await asyncio.to_thread(
+                self._vad.extract_segments, clean_pcm
+            )
         except Exception as exc:
             logger.warning("VAD error: %s", exc)
-            speech_pcm, vad_conf = clean_pcm, 0.5
-        vad_ms = round((time.monotonic() - t0) * 1000)
-        logger.info(
-            "VAD: speech=%d bytes  conf=%.3f  %dms",
-            len(speech_pcm) if speech_pcm else 0, vad_conf, vad_ms,
-        )
+            n_samples = len(clean_pcm) // 2
+            segments, vad_conf = [(0, n_samples)], 0.5
 
-        if not speech_pcm:
+        if not segments:
             logger.info("Orchestrator: VAD found no speech — discarding utterance")
             return None
 
-        # ── 3. Speaker identification ───────────────────────────────────
-        t0 = time.monotonic()
-        try:
-            speaker, match_conf, embedding = await asyncio.to_thread(
-                self._sid.identify, speech_pcm
-            )
-        except Exception as exc:
-            logger.warning("Speaker ID error: %s", exc)
-            speaker, match_conf, embedding = None, None, None
-        sid_ms = round((time.monotonic() - t0) * 1000)
+        clean_speech = self._vad.apply_segments(clean_pcm, segments)
+        raw_speech   = self._vad.apply_segments(raw_pcm,   segments)
+        vad_ms = round((time.monotonic() - t0) * 1000)
+        logger.info(
+            "VAD: speech=%d bytes  conf=%.3f  %dms",
+            len(clean_speech), vad_conf, vad_ms,
+        )
 
-        # ── 4. Speech-to-text ───────────────────────────────────────────
-        t0 = time.monotonic()
-        try:
-            transcript = await asyncio.to_thread(self._stt.transcribe, speech_pcm)
-        except Exception as exc:
-            logger.warning("STT error: %s", exc)
-            transcript = ""
-        stt_ms = round((time.monotonic() - t0) * 1000)
+        # ── 3+4. Speaker ID and STT — run in parallel ───────────────────
+        # SID receives raw (unprocessed) audio; STT receives DTLN-cleaned audio.
+        # SID runs on CPU (ONNX); STT runs on GPU (CUDA) — no hardware contention.
+        (speaker, match_conf, embedding), sid_ms, transcript, stt_ms = (
+            await self._run_sid_stt_parallel(raw_speech, clean_speech)
+        )
 
         if not transcript.strip():
             logger.info("Orchestrator: STT returned empty transcript — discarding utterance")
             return None
 
         # ── 5. Compute duration ─────────────────────────────────────────
-        num_samples  = len(speech_pcm) // 2          # 16-bit = 2 bytes/sample
-        duration_ms  = max(1, int(num_samples / _SAMPLE_RATE * 1000))
-        total_ms     = round((time.monotonic() - t_start) * 1000)
+        num_samples = len(clean_speech) // 2
+        duration_ms = max(1, int(num_samples / _SAMPLE_RATE * 1000))
+        total_ms    = round((time.monotonic() - t_start) * 1000)
 
         timings = {"ns": ns_ms, "vad": vad_ms, "sid": sid_ms, "stt": stt_ms, "total": total_ms}
 
@@ -147,7 +147,7 @@ class VoicePipelineOrchestrator:
         asyncio.create_task(
             self._writer.write(
                 interaction_id=interaction_id,
-                audio_bytes=speech_pcm,
+                audio_bytes=clean_speech,
                 transcript=transcript,
                 duration_ms=duration_ms,
                 vad_confidence=vad_conf,
@@ -177,3 +177,33 @@ class VoicePipelineOrchestrator:
             ns_ms, vad_ms, sid_ms, stt_ms, total_ms,
         )
         return result
+
+    async def _run_sid_stt_parallel(
+        self, raw_speech: bytes, clean_speech: bytes
+    ) -> tuple[tuple, int, str, int]:
+        """
+        Run speaker ID and STT concurrently and return their results with timings.
+        Returns (sid_result_tuple, sid_ms, transcript, stt_ms).
+        """
+        async def _sid() -> tuple[tuple, int]:
+            t = time.monotonic()
+            try:
+                result = await asyncio.to_thread(self._sid.identify, raw_speech)
+            except Exception as exc:
+                logger.warning("Speaker ID error: %s", exc)
+                result = (None, None, None)
+            return result, round((time.monotonic() - t) * 1000)
+
+        async def _stt() -> tuple[str, int]:
+            t = time.monotonic()
+            try:
+                result = await asyncio.to_thread(self._stt.transcribe, clean_speech)
+            except Exception as exc:
+                logger.warning("STT error: %s", exc)
+                result = ""
+            return result, round((time.monotonic() - t) * 1000)
+
+        (sid_result, sid_ms), (transcript, stt_ms) = await asyncio.gather(
+            _sid(), _stt()
+        )
+        return sid_result, sid_ms, transcript, stt_ms

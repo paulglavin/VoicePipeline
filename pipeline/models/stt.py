@@ -52,6 +52,13 @@ class SpeechToText:
         return self._impl.transcribe(pcm_bytes)
 
 
+def _is_hf_model_cached(cache_dir: str, model_id: str) -> bool:
+    """Return True if the HuggingFace model snapshot is already on disk."""
+    slug = "models--" + model_id.replace("/", "--")
+    snapshots = Path(cache_dir) / slug / "snapshots"
+    return snapshots.is_dir() and any(snapshots.iterdir())
+
+
 class _LocalSTT:
     """Local HuggingFace STT. Model ID is configurable — defaults to Granite 4.0 1B Speech."""
 
@@ -70,15 +77,18 @@ class _LocalSTT:
             cuda         = torch.cuda.is_available()
             self._device = "cuda" if cuda else "cpu"
 
+            local_only = _is_hf_model_cached(cache_dir, model_id)
             logger.info(
-                "Loading %s on %s — first run downloads model weights",
+                "Loading %s on %s%s",
                 model_id, self._device,
+                " (cached — offline)" if local_only else " — first run downloads model weights",
             )
 
             self._processor = AutoProcessor.from_pretrained(
                 model_id,
                 cache_dir=cache_dir,
                 trust_remote_code=True,
+                local_files_only=local_only,
             )
             self._tokenizer = self._processor.tokenizer
             self._model = AutoModelForSpeechSeq2Seq.from_pretrained(
@@ -87,6 +97,7 @@ class _LocalSTT:
                 trust_remote_code=True,
                 dtype=torch.bfloat16,
                 device_map=self._device,
+                local_files_only=local_only,
             )
             self._model.eval()
 
