@@ -1,6 +1,10 @@
 services:
   voicepipeline:
-    build: .
+    # Pre-built images (choose one — comment out the others):
+    image: ghcr.io/paulglavin/voicepipeline:slim            # remote STT only — smallest image
+    # image: ghcr.io/paulglavin/voicepipeline:faster-whisper  # faster-whisper CPU/GPU
+    # image: ghcr.io/paulglavin/voicepipeline:cuda            # IBM Granite (requires CUDA)
+    # To build locally instead:  build: .
     container_name: voicepipeline
     ports:
       - "8000:8000"       # HTTP — management UI + API

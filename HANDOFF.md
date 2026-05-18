@@ -15,7 +15,7 @@ The broader pipeline this feeds into uses four models in sequence:
 1. **GTCRN Full (Streaming)** — noise suppression, runs as a PipeWire LADSPA filter or ONNX service
 2. **SileroVAD v5** — voice activity detection, gates everything downstream
 3. **3D-Speaker ERes2Net** — speaker identification, produces a 192-dim embedding vector
-4. **Granite 4.0 1B Speech** — STT, produces the transcript
+4. **Speech-to-text** — produces the transcript. Three providers: Local HuggingFace model (default: Granite 4.0 1B Speech), faster-whisper (CTranslate2, tiny/base/small, no GPU required), or remote OpenAI-compatible endpoint
 
 This system is the management layer on top of that pipeline — it stores every
 interaction, surfaces the ones that need human review, and lets you resolve them.

@@ -29,7 +29,7 @@ Without Personality LLM, VoicePipeline still works as a standard Wyoming STT pro
 - Docker + Docker Compose
 - Ports `8000` (management UI) and `10300` (Wyoming) available on the host
 - **For local Granite STT only**: NVIDIA GPU with `nvidia-container-toolkit` installed, CUDA 12.8+, ~3 GB free disk space for model weights
-  - Not required if using the slim image with a [remote STT endpoint](#configuring-models)
+  - Not required if using the `:faster-whisper` image (CPU, ~150–500 MB) or the `:slim` image with a [remote STT endpoint](#configuring-models)
 
 ---
 
@@ -39,10 +39,15 @@ Pre-built images are published to the GitHub Container Registry on every push to
 
 | Image | Size | GPU required | STT |
 |-------|------|-------------|-----|
-| `ghcr.io/paulglavin/voicepipeline:latest` | ~400 MB | No | Remote endpoint |
-| `ghcr.io/paulglavin/voicepipeline:cuda` | ~2.5 GB | Yes (CUDA 12.8+) | Local Granite 4.0 1B |
+| `ghcr.io/paulglavin/voicepipeline:latest` | ~400 MB | No | Remote endpoint only |
+| `ghcr.io/paulglavin/voicepipeline:faster-whisper` | ~500 MB | No (CUDA auto-used if present) | faster-whisper (tiny/base/small) or remote |
+| `ghcr.io/paulglavin/voicepipeline:cuda` | ~2.5 GB | Yes (CUDA 12.8+) | Local Granite 4.0 1B, faster-whisper, or remote |
 
-**Most users should start with `:latest`** — configure a remote STT endpoint in the management UI after first boot. Use `:cuda` only if you want to run Granite on-device.
+**Space-constrained or GPU-free?** Use `:faster-whisper` — Whisper `base` gives good accuracy with ~150 MB of model weights and no GPU required.
+
+**Want Granite on-device?** Use `:cuda` — requires an NVIDIA GPU and `HF_TOKEN`.
+
+**Remote STT only?** Use `:latest` — smallest image, no ML dependencies beyond the speaker ID stack.
 
 ---
 
@@ -62,7 +67,7 @@ If you plan to use the `:cuda` image with the default Granite STT model, add you
 HF_TOKEN=hf_your_token_here
 ```
 
-Skip this if using `:latest` with a remote STT endpoint.
+Skip this if using `:faster-whisper` or `:latest`.
 
 ### 2. Start
 
@@ -72,23 +77,34 @@ docker compose up -d
 
 Docker Compose pulls the pre-built image automatically. The management UI is available at `http://<your-server-ip>:8000`.
 
-> **To use the CUDA image**, edit `docker-compose.yml` and change the image tag from `:latest` to `:cuda`, then add the `nvidia` runtime and `HF_TOKEN` to the service definition.
+> **To switch image variant**, edit `docker-compose.yml` and replace `build: .` with the appropriate `image:` line — the comments in the file list all three options.
 
 > **To build locally** (development or custom changes):
 > ```bash
+> # slim (remote STT only)
 > docker compose build
-> docker compose up -d
+>
+> # with faster-whisper
+> docker compose build --build-arg ENABLE_FASTER_WHISPER=true
+>
+> # with Granite (CUDA required at runtime)
+> docker compose build --build-arg ENABLE_LOCAL_STT=true
+>
+> # with both faster-whisper and Granite
+> docker compose build --build-arg ENABLE_FASTER_WHISPER=true --build-arg ENABLE_LOCAL_STT=true
 > ```
-> For the CUDA variant: `docker compose build --build-arg ENABLE_LOCAL_STT=true`
 
-First boot with the CUDA image downloads model weights to `./models`:
+Model weights are downloaded on first use and cached in `./models`:
 
-| Model | Size | Notes |
-|-------|------|-------|
-| DTLN ONNX (×2) | ~2 MB | Noise suppressor — downloaded from GitHub |
-| SileroVAD ONNX | ~2 MB | VAD — copied from pip package, no download |
-| WeSpeaker ECAPA-TDNN | ~50 MB | Speaker ID — downloaded by wespeakerruntime |
-| Granite 4.0 1B Speech | ~2 GB | STT — requires `HF_TOKEN`, downloaded from HuggingFace |
+| Model | Size | Image | Notes |
+|-------|------|-------|-------|
+| DTLN ONNX (×2) | ~2 MB | all | Noise suppressor |
+| SileroVAD ONNX | ~2 MB | all | VAD — bundled in pip package |
+| WeSpeaker ECAPA-TDNN | ~50 MB | all | Speaker ID |
+| faster-whisper tiny | ~40 MB | `:faster-whisper`, `:cuda` | STT — downloaded on first use |
+| faster-whisper base | ~150 MB | `:faster-whisper`, `:cuda` | STT — default for faster-whisper |
+| faster-whisper small | ~490 MB | `:faster-whisper`, `:cuda` | STT — higher accuracy |
+| Granite 4.0 1B Speech | ~2 GB | `:cuda` | STT — requires `HF_TOKEN` |
 
 The `./models` directory is a host bind mount that survives image updates.
 
@@ -135,18 +151,27 @@ Open the management UI at `http://<your-server-ip>:8000`.
 
 The **Settings → Speech Recognition** and **Settings → Speaker Identification** sections let you change models without editing code or restarting the container.
 
-### STT: Local vs Remote
+### STT provider
 
-| Provider | When to use |
-|----------|-------------|
-| **Local (HuggingFace)** | Default. Runs on-device; requires a GPU and `HF_TOKEN` for gated models. |
-| **Remote (OpenAI-compatible)** | Use when you have a separate GPU machine running Ollama or another OpenAI-compatible server. No local GPU required. |
+| Provider | Image needed | GPU | When to use |
+|----------|-------------|-----|-------------|
+| **Local (HuggingFace)** | `:cuda` | Yes | On-device Granite 4.0 1B Speech or any other HF model. Requires `HF_TOKEN` for gated models. |
+| **Faster Whisper** | `:faster-whisper` or `:cuda` | No (CUDA auto-used if present) | Best choice for space-constrained or GPU-free setups. Choose `tiny`, `base`, or `small` as the model size. |
+| **Remote (OpenAI-compatible)** | any | No | Offload transcription to a separate machine running Ollama or any OpenAI-compatible server. |
 
-For remote STT:
+**To configure Faster Whisper:**
+1. Select **Faster Whisper (CPU/GPU)** as the provider
+2. Set the **Model** field to `tiny`, `base`, or `small` (default: `base`)
+3. Optionally enter a short **transcription prompt** — e.g. `Home Assistant voice command` — as context for the model
+4. Click **Save & reload models**
+
+Model weights are downloaded on first use to `./models/faster_whisper/`.
+
+**To configure Remote STT:**
 1. Select **Remote (OpenAI-compatible)** as the provider
 2. Set the **API base URL** (e.g. `http://bigbox:11434/v1` for Ollama)
 3. Enter the **model name** as known to that server
-4. Clear the **transcription prompt** field (the default is tuned for Granite and won't work on other models)
+4. Clear the **transcription prompt** field (the default is tuned for Granite)
 5. Click **Save & reload models**
 
 ### Speaker ID model
@@ -237,6 +262,6 @@ Model weights in `./models` are preserved across image updates.
 
 - **No authentication** — intended for home LAN only; do not expose to the internet
 - **Single global match threshold** — one threshold applies to all speakers; household members with similar voices may need manual threshold tuning
-- **Local STT requires PyTorch/CUDA** — no ONNX path for Granite; use the remote STT option if you don't have a local GPU
+- **Local Granite STT requires PyTorch/CUDA** — no ONNX path for Granite; use faster-whisper or the remote STT option if you don't have a local GPU
 
 For implementation details see [docs/architecture.md](docs/architecture.md).

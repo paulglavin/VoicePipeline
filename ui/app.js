@@ -739,10 +739,14 @@ document.getElementById('settings-form').addEventListener('submit', async e => {
 
 function _updateSttProviderUI(provider) {
   const isRemote = provider === 'openai_compatible';
-  document.getElementById('stt-remote-section').hidden  = !isRemote;
-  document.getElementById('stt-apikey-section').hidden  = !isRemote;
-  document.getElementById('stt-model-hint-local').hidden  = isRemote;
-  document.getElementById('stt-model-hint-remote').hidden = !isRemote;
+  const isFw     = provider === 'faster_whisper';
+  document.getElementById('stt-remote-section').hidden      = !isRemote;
+  document.getElementById('stt-apikey-section').hidden      = !isRemote;
+  document.getElementById('stt-model-hint-local').hidden    = isRemote || isFw;
+  document.getElementById('stt-model-hint-fw').hidden       = !isFw;
+  document.getElementById('stt-model-hint-remote').hidden   = !isRemote;
+  document.getElementById('stt-prompt-hint-default').hidden = isFw;
+  document.getElementById('stt-prompt-hint-fw').hidden      = !isFw;
 }
 
 document.getElementById('s-stt-provider').addEventListener('change', e => {

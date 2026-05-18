@@ -1,0 +1,8 @@
+# Faster-whisper STT dependencies — CTranslate2-backed Whisper models.
+# Runs on CPU (int8) or CUDA (float16) — no separate CUDA wheel needed.
+# Model weights (tiny ~40 MB, base ~150 MB, small ~490 MB) are downloaded
+# on first use to MODEL_DIR/faster_whisper/.
+#
+# Install when building with ENABLE_FASTER_WHISPER=true.
+# Does NOT require torch — safe to use on CPU-only hosts.
+faster-whisper>=1.0.3

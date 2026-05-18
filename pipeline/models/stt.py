@@ -1,9 +1,12 @@
 """
-stt.py — Speech-to-text: local HuggingFace or remote OpenAI-compatible.
+stt.py — Speech-to-text: local HuggingFace, faster-whisper, or remote OpenAI-compatible.
 
-Local provider: loads the configured HuggingFace model on-device.
-Remote provider: calls /v1/audio/transcriptions on an OpenAI-compatible endpoint,
-                 e.g. Ollama running on a separate GPU machine.
+local            — loads a HuggingFace model on-device (e.g. Granite 4.0 1B Speech).
+faster_whisper   — CTranslate2-backed Whisper; no GPU required. model_id = size
+                   (tiny ~40 MB | base ~150 MB | small ~490 MB). Auto-uses CUDA if
+                   available.
+openai_compatible — calls /v1/audio/transcriptions on any OpenAI-compatible endpoint,
+                   e.g. Ollama on a separate GPU machine.
 
 transcribe() is synchronous and blocking — call via asyncio.to_thread.
 """
@@ -41,6 +44,8 @@ class SpeechToText:
     ) -> None:
         if provider == "openai_compatible" and base_url:
             self._impl = _RemoteSTT(model_id, base_url, api_key, prompt)
+        elif provider == "faster_whisper":
+            self._impl = _FasterWhisperSTT(model_dir, model_id, prompt)
         else:
             self._impl = _LocalSTT(model_dir, model_id, prompt)
 
@@ -169,6 +174,77 @@ class _LocalSTT:
 
         except Exception as exc:
             logger.warning("Transcription error: %s", exc)
+            return ""
+
+
+class _FasterWhisperSTT:
+    """
+    Local STT via faster-whisper (CTranslate2 backend).
+
+    model_size — one of: tiny, base, small, medium, large-v2, large-v3
+    Runs on CPU (int8) or CUDA (float16) — device is auto-detected.
+    No HF_TOKEN required; model weights downloaded to model_dir/faster_whisper/.
+    """
+
+    def __init__(self, model_dir: str, model_size: str, prompt: str = "") -> None:
+        self._model          = None
+        # Strip Granite chat-template tokens — not meaningful to Whisper
+        self._initial_prompt = prompt if not prompt.startswith("<|") else ""
+        cache_dir            = str(Path(model_dir) / "faster_whisper")
+        size                 = model_size or "base"
+
+        try:
+            from faster_whisper import WhisperModel
+
+            try:
+                import ctranslate2
+                device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+            except Exception:
+                device = "cpu"
+
+            compute_type = "float16" if device == "cuda" else "int8"
+
+            logger.info(
+                "Loading faster-whisper '%s' on %s (compute_type=%s)"
+                " — first run downloads model weights",
+                size, device, compute_type,
+            )
+            self._model = WhisperModel(
+                size,
+                device=device,
+                compute_type=compute_type,
+                download_root=cache_dir,
+            )
+            logger.info("Faster-whisper ready: %s on %s", size, device)
+
+        except Exception as exc:
+            logger.warning("Faster-whisper init failed (%s) — transcription unavailable", exc)
+
+    @property
+    def available(self) -> bool:
+        return self._model is not None
+
+    def unload(self) -> None:
+        self._model = None
+
+    def transcribe(self, pcm_bytes: bytes) -> str:
+        if not self.available or not pcm_bytes:
+            return ""
+
+        try:
+            audio = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+
+            kwargs: dict = {"beam_size": 5, "language": "en"}
+            if self._initial_prompt:
+                kwargs["initial_prompt"] = self._initial_prompt
+
+            segments, _ = self._model.transcribe(audio, **kwargs)
+            text = " ".join(s.text for s in segments).strip()
+            logger.debug("Faster-whisper: %r", text)
+            return text
+
+        except Exception as exc:
+            logger.warning("Faster-whisper transcription error: %s", exc)
             return ""
 
 

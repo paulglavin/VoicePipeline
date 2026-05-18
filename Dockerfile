@@ -1,8 +1,10 @@
 FROM python:3.12-slim
 
-# Set to "true" to include IBM Granite local STT (requires CUDA 12.8+ at runtime).
-# Leave as "false" (default) for a smaller image that uses a remote STT endpoint instead.
+# ENABLE_LOCAL_STT=true  — IBM Granite 4.0 1B Speech (requires CUDA 12.8+ at runtime, ~2 GB weights)
+# ENABLE_FASTER_WHISPER=true — faster-whisper tiny/base/small (CPU or CUDA, ~40–490 MB weights)
+# Both default to false; the slim build uses the remote OpenAI-compatible STT endpoint.
 ARG ENABLE_LOCAL_STT=false
+ARG ENABLE_FASTER_WHISPER=false
 
 # System libraries required by audio processing and model inference
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -13,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY requirements.txt requirements-local-stt.txt ./
+COPY requirements.txt requirements-local-stt.txt requirements-faster-whisper.txt ./
 
 # ── Base dependencies (no torch) ───────────────────────────────────
 RUN pip install --no-cache-dir -r requirements.txt
@@ -26,6 +28,13 @@ RUN if [ "$ENABLE_LOCAL_STT" = "true" ]; then \
             --index-url https://download.pytorch.org/whl/cu128 \
             "torch>=2.7.0" "torchaudio>=2.7.0" && \
         pip install --no-cache-dir -r requirements-local-stt.txt; \
+    fi
+
+# ── Faster-whisper STT: CTranslate2 (CPU or CUDA, no torch needed) ─
+# Lightweight alternative to Granite. Works on CPU-only hosts.
+# Enable with: --build-arg ENABLE_FASTER_WHISPER=true
+RUN if [ "$ENABLE_FASTER_WHISPER" = "true" ]; then \
+        pip install --no-cache-dir -r requirements-faster-whisper.txt; \
     fi
 
 # ── Application source ─────────────────────────────────────────────

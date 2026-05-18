@@ -117,6 +117,7 @@
             <label for="s-stt-provider">Provider</label>
             <select class="setting-input" id="s-stt-provider">
               <option value="local">Local (HuggingFace)</option>
+              <option value="faster_whisper">Faster Whisper (CPU/GPU)</option>
               <option value="openai_compatible">Remote (OpenAI-compatible)</option>
             </select>
             <p class="setting-hint">Local loads the model on this machine. Remote calls an OpenAI-compatible /v1/audio/transcriptions endpoint, e.g. Ollama on a separate GPU machine.</p>
@@ -126,6 +127,7 @@
             <label for="s-stt-model">Model</label>
             <input class="setting-input setting-input--wide" id="s-stt-model" type="text" placeholder="ibm-granite/granite-4.0-1b-speech">
             <p class="setting-hint" id="stt-model-hint-local">HuggingFace model ID. Downloaded on first use and cached in the models volume.</p>
+            <p class="setting-hint" id="stt-model-hint-fw" hidden>Model size: <em>tiny</em> (~40 MB), <em>base</em> (~150 MB), or <em>small</em> (~490 MB). No GPU required — uses CUDA automatically if available.</p>
             <p class="setting-hint" id="stt-model-hint-remote" hidden>Model name as known to the remote server (e.g. <em>gemma4</em>, <em>whisper-large-v3</em>).</p>
           </div>
 
@@ -143,7 +145,8 @@
           <div class="setting-row">
             <label for="s-stt-prompt">Transcription prompt</label>
             <input class="setting-input setting-input--wide" id="s-stt-prompt" type="text">
-            <p class="setting-hint">Instruction passed to the model. The default is tuned for Granite. Leave blank or adjust for other models.</p>
+            <p class="setting-hint" id="stt-prompt-hint-default">Instruction passed to the model. The default is tuned for Granite. Leave blank or adjust for other models.</p>
+            <p class="setting-hint" id="stt-prompt-hint-fw" hidden>Optional context hint passed to Whisper as <em>initial_prompt</em>. Leave blank or enter a short phrase like <em>Home Assistant voice command</em>.</p>
           </div>
 
           <h2>Speaker Identification</h2>

@@ -26,8 +26,9 @@ Wyoming AudioChunk(s)
         ↓ (silent frames discarded here)
 [3] SpeakerIdentifier    WeSpeaker ECAPA-TDNN (ONNX via wespeakerruntime)
         ↓
-[4] SpeechToText         Local: HuggingFace transformers (Granite 4.0 1B Speech)
-                         Remote: OpenAI-compatible /v1/audio/transcriptions
+[4] SpeechToText         local:           HuggingFace transformers (e.g. Granite 4.0 1B Speech)
+                         faster_whisper:  CTranslate2 Whisper (tiny / base / small)
+                         openai_compatible: /v1/audio/transcriptions endpoint
         ↓
 InteractionWriter        SQLite + WAV + .npy (fire-and-forget asyncio.create_task)
 ```
@@ -105,7 +106,7 @@ Calling `POST /models/reload` constructs a new `SpeakerIdentifier` (and `SpeechT
 
 **Implementation:** `pipeline/models/stt.py` — `SpeechToText` factory
 
-`SpeechToText.__init__` selects one of two implementations based on `stt_provider`:
+`SpeechToText.__init__` selects one of three implementations based on `stt_provider`:
 
 ### Local: `_LocalSTT`
 
@@ -117,7 +118,19 @@ Default model: `ibm-granite/granite-4.0-1b-speech`. The transcription prompt is 
 [{"role": "user", "content": "<|audio|>can you transcribe the speech into a written format?"}]
 ```
 
-Model weights are cached in `MODEL_DIR/granite_stt/`.
+Model weights are cached in `MODEL_DIR/granite_stt/`. Requires `ENABLE_LOCAL_STT=true` at image build time (installs PyTorch + transformers).
+
+### Faster Whisper: `_FasterWhisperSTT`
+
+CTranslate2-backed Whisper. No PyTorch required — uses `ctranslate2` directly.
+
+`stt_model` is the model size string: `tiny` (~40 MB), `base` (~150 MB), or `small` (~490 MB). Any other [faster-whisper model name](https://huggingface.co/Systran) is also accepted.
+
+Device is auto-detected: `ctranslate2.get_cuda_device_count()` selects CUDA (`float16`) if available, otherwise CPU (`int8`). Weights are downloaded on first use to `MODEL_DIR/faster_whisper/`.
+
+Granite-specific `<|...|>` chat-template tokens in the prompt are stripped automatically; the plain text remainder is passed as `initial_prompt` to give Whisper context.
+
+Requires `ENABLE_FASTER_WHISPER=true` at image build time (installs `faster-whisper`).
 
 ### Remote: `_RemoteSTT`
 
@@ -125,7 +138,7 @@ Sends audio to any OpenAI-compatible `/v1/audio/transcriptions` endpoint (e.g. O
 
 Granite-specific `<|...|>` prompt tokens are stripped automatically when switching to a remote provider, since other models don't use that format.
 
-Uses `httpx` with a 30-second timeout. The `api_key` field is optional (omitted from the request if blank).
+Uses `httpx` with a 30-second timeout. The `api_key` field is optional (omitted from the request if blank). Available in all image variants.
 
 ---
 
@@ -355,7 +368,7 @@ pipeline/
     noise_suppressor.py  DTLN ONNX wrapper
     vad.py             SileroVAD ONNX wrapper
     speaker_id.py      WeSpeaker ECAPA-TDNN wrapper
-    stt.py             SpeechToText factory (_LocalSTT / _RemoteSTT)
+    stt.py             SpeechToText factory (_LocalSTT / _FasterWhisperSTT / _RemoteSTT)
 ui/
   index.html           Single-page management UI
   app.js               Fetch-based API client, tab management

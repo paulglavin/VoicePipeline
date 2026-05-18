@@ -1,0 +1,60 @@
+# Development / testing stack — runs alongside production without touching it.
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up --build          # start (builds fresh)
+#   docker compose -f docker-compose.dev.yml down                # stop and remove container
+#   docker compose -f docker-compose.dev.yml logs -f             # tail logs
+#
+# UI:     http://localhost:8001
+# Wyoming: localhost:10301  (do NOT point HA here — dev only)
+#
+# Data lands in ./dev-data — completely separate from ./data (production).
+# Model weights in ./models are shared read-only — no double-download.
+
+services:
+  voicepipeline-dev:
+    build:
+      context: .
+      args:
+        # Enable faster-whisper in the dev build so you can test the new provider.
+        # Switch ENABLE_LOCAL_STT to "true" if you want to test Granite locally.
+        ENABLE_FASTER_WHISPER: "true"
+        ENABLE_LOCAL_STT: "false"
+    container_name: voicepipeline-dev
+    ports:
+      - "8001:8000"       # management UI
+      - "10301:10300"     # Wyoming STT
+    volumes:
+      - ./dev-data:/data          # isolated data — never touches ./data
+      - ./models:/models          # shared model cache — avoids re-downloading
+    environment:
+      DB_PATH:            /data/speaker.db
+      AUDIO_DIR:          /data/audio
+      EMBEDDING_DIR:      /data/embeddings
+      MODEL_DIR:          /models
+      WYOMING_HOST:       0.0.0.0
+      WYOMING_PORT:       "10300"
+      HF_TOKEN:           ${HF_TOKEN:-}
+      DTLN_MIX:           "0.3"
+      HA_BASE_URL:        "http://192.168.2.30:8123"
+      HA_WEBHOOK_ENABLED: "false"   # never fire HA webhooks from dev
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: "no"    # don't auto-restart after reboot
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/settings')"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes: {}
