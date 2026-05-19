@@ -18,19 +18,23 @@ jobs:
           - variant: slim
             enable_local_stt: "false"
             enable_faster_whisper: "false"
-            tags: |
+            # Floating tags always published; versioned tag has no suffix (slim is the default)
+            floating_tags: |
               ghcr.io/paulglavin/voicepipeline:latest
               ghcr.io/paulglavin/voicepipeline:slim
+            version_suffix: ""
           - variant: faster-whisper
             enable_local_stt: "false"
             enable_faster_whisper: "true"
-            tags: |
+            floating_tags: |
               ghcr.io/paulglavin/voicepipeline:faster-whisper
+            version_suffix: "-faster-whisper"
           - variant: cuda
             enable_local_stt: "true"
             enable_faster_whisper: "false"
-            tags: |
+            floating_tags: |
               ghcr.io/paulglavin/voicepipeline:cuda
+            version_suffix: "-cuda"
 
     steps:
       - uses: actions/checkout@v4
@@ -45,12 +49,26 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Generate image tags
+        id: meta
+        run: |
+          TAGS="${{ matrix.floating_tags }}"
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAGS="$TAGS
+          ghcr.io/paulglavin/voicepipeline:${{ github.ref_name }}${{ matrix.version_suffix }}"
+          fi
+          {
+            echo "tags<<EOF"
+            echo "$TAGS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and push (${{ matrix.variant }})
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: ${{ matrix.tags }}
+          tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             ENABLE_LOCAL_STT=${{ matrix.enable_local_stt }}
             ENABLE_FASTER_WHISPER=${{ matrix.enable_faster_whisper }}
