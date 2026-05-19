@@ -63,6 +63,12 @@ class WebhookNotifier:
         """
         ha_base_url, enabled = self._read_settings()
         if not enabled or not ha_base_url:
+            logger.debug(
+                "Webhook: suppressed (enabled=%s)  speaker=%s conf=%.2f payload would be: %s",
+                enabled, speaker_id, confidence,
+                {"speaker_id": speaker_id, "confidence": round(float(confidence), 4),
+                 "interaction_id": interaction_id},
+            )
             return
 
         url = ha_base_url.rstrip("/") + _WEBHOOK_PATH
