@@ -39,15 +39,12 @@ Pre-built images are published to the GitHub Container Registry on every push to
 
 | Image | Size | GPU required | STT |
 |-------|------|-------------|-----|
-| `ghcr.io/paulglavin/voicepipeline:latest` | ~400 MB | No | Remote endpoint only |
-| `ghcr.io/paulglavin/voicepipeline:faster-whisper` | ~500 MB | No (CUDA auto-used if present) | faster-whisper (tiny/base/small) or remote |
+| `ghcr.io/paulglavin/voicepipeline:latest` (also `:faster-whisper`) | ~500 MB | No (CUDA auto-used if present) | faster-whisper (tiny/base/small) or remote |
 | `ghcr.io/paulglavin/voicepipeline:cuda` | ~2.5 GB | Yes (CUDA 12.8+) | Local Granite 4.0 1B, faster-whisper, or remote |
 
-**Space-constrained or GPU-free?** Use `:faster-whisper` — Whisper `base` gives good accuracy with ~150 MB of model weights and no GPU required.
+**No GPU?** Use `:latest` — faster-whisper `base` gives good accuracy with ~150 MB of model weights and no GPU required. CUDA is used automatically if present.
 
 **Want Granite on-device?** Use `:cuda` — requires an NVIDIA GPU and `HF_TOKEN`.
-
-**Remote STT only?** Use `:latest` — smallest image, no ML dependencies beyond the speaker ID stack.
 
 ---
 
@@ -67,7 +64,7 @@ If you plan to use the `:cuda` image with the default Granite STT model, add you
 HF_TOKEN=hf_your_token_here
 ```
 
-Skip this if using `:faster-whisper` or `:latest`.
+Skip this if using `:latest`.
 
 ### 2. Start
 
@@ -77,20 +74,14 @@ docker compose up -d
 
 Docker Compose pulls the pre-built image automatically. The management UI is available at `http://<your-server-ip>:8000`.
 
-> **To switch image variant**, edit `docker-compose.yml` and replace `build: .` with the appropriate `image:` line — the comments in the file list all three options.
+> **To switch image variant**, edit `docker-compose.yml` and change the `image:` line — the comments in the file list both options.
 
 > **To build locally** (development or custom changes):
 > ```bash
-> # slim (remote STT only)
-> docker compose build
->
-> # with faster-whisper
+> # faster-whisper + remote STT (matches :latest)
 > docker compose build --build-arg ENABLE_FASTER_WHISPER=true
 >
-> # with Granite (CUDA required at runtime)
-> docker compose build --build-arg ENABLE_LOCAL_STT=true
->
-> # with both faster-whisper and Granite
+> # with Granite (CUDA required at runtime, matches :cuda)
 > docker compose build --build-arg ENABLE_FASTER_WHISPER=true --build-arg ENABLE_LOCAL_STT=true
 > ```
 
@@ -101,9 +92,9 @@ Model weights are downloaded on first use and cached in `./models`:
 | DTLN ONNX (×2) | ~2 MB | all | Noise suppressor |
 | SileroVAD ONNX | ~2 MB | all | VAD — bundled in pip package |
 | WeSpeaker ECAPA-TDNN | ~50 MB | all | Speaker ID |
-| faster-whisper tiny | ~40 MB | `:faster-whisper`, `:cuda` | STT — downloaded on first use |
-| faster-whisper base | ~150 MB | `:faster-whisper`, `:cuda` | STT — default for faster-whisper |
-| faster-whisper small | ~490 MB | `:faster-whisper`, `:cuda` | STT — higher accuracy |
+| faster-whisper tiny | ~40 MB | all | STT — downloaded on first use |
+| faster-whisper base | ~150 MB | all | STT — default for faster-whisper |
+| faster-whisper small | ~490 MB | all | STT — higher accuracy |
 | Granite 4.0 1B Speech | ~2 GB | `:cuda` | STT — requires `HF_TOKEN` |
 
 The `./models` directory is a host bind mount that survives image updates.

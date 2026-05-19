@@ -15,23 +15,17 @@ jobs:
     strategy:
       matrix:
         include:
-          - variant: slim
-            enable_local_stt: "false"
-            enable_faster_whisper: "false"
-            # Floating tags always published; versioned tag has no suffix (slim is the default)
-            floating_tags: |
-              ghcr.io/paulglavin/voicepipeline:latest
-              ghcr.io/paulglavin/voicepipeline:slim
-            version_suffix: ""
           - variant: faster-whisper
             enable_local_stt: "false"
             enable_faster_whisper: "true"
+            # :latest and :faster-whisper are the same image — faster-whisper is the default
             floating_tags: |
+              ghcr.io/paulglavin/voicepipeline:latest
               ghcr.io/paulglavin/voicepipeline:faster-whisper
-            version_suffix: "-faster-whisper"
+            version_suffix: ""
           - variant: cuda
             enable_local_stt: "true"
-            enable_faster_whisper: "false"
+            enable_faster_whisper: "true"
             floating_tags: |
               ghcr.io/paulglavin/voicepipeline:cuda
             version_suffix: "-cuda"
