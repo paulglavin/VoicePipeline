@@ -36,8 +36,8 @@ services:
       WYOMING_PORT:       "10300"
       HF_TOKEN:           ${HF_TOKEN:-}
       DTLN_MIX:           "0.3"
-      HA_BASE_URL:        "http://192.168.2.30:8123"
-      HA_WEBHOOK_ENABLED: "false"   # never fire HA webhooks from dev
+      HA_BASE_URL:        "${HA_BASE_URL:-http://homeassistant.local:8123}"
+      HA_WEBHOOK_ENABLED: "${HA_WEBHOOK_ENABLED:-false}"   # dev: webhooks disabled by default
     deploy:
       resources:
         reservations:

@@ -23,10 +23,9 @@ services:
       HF_TOKEN: ${HF_TOKEN}
       DTLN_MIX: "0.3"         # 0 = bypass NS entirely for audio quality testing
       # HA Personality Engine integration.
-      # Set HA_BASE_URL to your HA instance and flip HA_WEBHOOK_ENABLED to "true"
-      # once the personality_engine custom component is installed in HA.
-      HA_BASE_URL: "http://192.168.2.30:8123"           # e.g. http://homeassistant.local:8123
-      HA_WEBHOOK_ENABLED: "true"
+      # Override via .env.local or Portainer environment variables.
+      HA_BASE_URL: "${HA_BASE_URL:-http://homeassistant.local:8123}"
+      HA_WEBHOOK_ENABLED: "${HA_WEBHOOK_ENABLED:-true}"
     deploy:
       resources:
         reservations:

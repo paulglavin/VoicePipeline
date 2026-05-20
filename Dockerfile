@@ -34,7 +34,7 @@ RUN if [ "$ENABLE_LOCAL_STT" = "true" ]; then \
 # Lightweight alternative to Granite. Works on CPU-only hosts.
 # Enable with: --build-arg ENABLE_FASTER_WHISPER=true
 RUN if [ "$ENABLE_FASTER_WHISPER" = "true" ]; then \
-        pip install --no-cache-dir -r requirements-faster-whisper.txt; \
+        pip install --no-cache-dir --default-timeout=100 --retries 5 -r requirements-faster-whisper.txt; \
     fi
 
 # ── Application source ─────────────────────────────────────────────
