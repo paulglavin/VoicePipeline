@@ -29,7 +29,7 @@ Without Personality LLM, VoicePipeline still works as a standard Wyoming STT pro
 - Docker + Docker Compose
 - Ports `8000` (management UI) and `10300` (Wyoming) available on the host
 - **For local Granite STT only**: NVIDIA GPU with `nvidia-container-toolkit` installed, CUDA 12.8+, ~3 GB free disk space for model weights
-  - Not required if using the `:faster-whisper` image (CPU, ~150–500 MB) or the `:slim` image with a [remote STT endpoint](#configuring-models)
+  - Not required if using the `:faster-whisper` image (CPU, ~150–500 MB) or a [remote STT endpoint](#configuring-models)
 
 ---
 
@@ -160,7 +160,7 @@ Model weights are downloaded on first use to `./models/faster_whisper/`.
 
 **To configure Remote STT:**
 1. Select **Remote (OpenAI-compatible)** as the provider
-2. Set the **API base URL** (e.g. `http://bigbox:11434/v1` for Ollama)
+2. Set the **API base URL** (e.g. `http://remoteip:11434/v1` for Ollama)
 3. Enter the **model name** as known to that server
 4. Clear the **transcription prompt** field (the default is tuned for Granite)
 5. Click **Save & reload models**
