@@ -9,8 +9,8 @@ services:
       - "8000:8000"       # HTTP — management UI + API
       - "10300:10300"     # Wyoming STT — add this as a custom integration in HA
     volumes:
-      - ./data:/data                  # runtime data (DB, audio clips, embeddings)
-      - ./models:/models              # ML model weights (host bind mount — survives rebuilds and volume ops)
+      - /mnt/data/VoicePipeline/data:/data                  # runtime data (DB, audio clips, embeddings)
+      - /mnt/data/VoicePipeline/models:/models              # ML model weights (host bind mount — survives rebuilds and volume ops)
     environment:
       DB_PATH:           /data/speaker.db
       AUDIO_DIR:         /data/audio

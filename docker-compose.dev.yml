@@ -25,8 +25,8 @@ services:
       - "8001:8000"       # management UI
       - "10301:10300"     # Wyoming STT
     volumes:
-      - ./dev-data:/data          # isolated data — never touches ./data
-      - ./models:/models          # shared model cache — avoids re-downloading
+      - /mnt/data/VoicePipeline/dev-data:/data          # isolated data — never touches production ./data
+      - /mnt/data/VoicePipeline/models:/models          # shared model cache — avoids re-downloading
     environment:
       DB_PATH:            /data/speaker.db
       AUDIO_DIR:          /data/audio
