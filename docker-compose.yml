@@ -26,13 +26,15 @@ services:
       # Override via .env.local or Portainer environment variables.
       HA_BASE_URL: "${HA_BASE_URL:-http://homeassistant.local:8123}"
       HA_WEBHOOK_ENABLED: "${HA_WEBHOOK_ENABLED:-true}"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+    # GPU pass-through — only needed for the :cuda image (Granite).
+    # Uncomment when switching to ghcr.io/paulglavin/voicepipeline:cuda
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
     restart: unless-stopped
     healthcheck:
       test:
